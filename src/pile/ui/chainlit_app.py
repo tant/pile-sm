@@ -133,6 +133,8 @@ async def _handle_file_uploads(message: cl.Message) -> list[str]:
 
 async def _run_workflow_once(workflow, *, user_input: str | None = None, responses: dict | None = None):
     """Stream a single workflow run, returning pending requests."""
+    import asyncio
+
     msg = cl.Message(content="", author="Pile SM")
     await msg.send()
 
@@ -145,44 +147,54 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     else:
         run_iter = workflow.run(responses=responses, stream=True, include_status_events=True)
 
-    async for event in run_iter:
-        executor_id = getattr(event, "executor_id", None)
+    try:
+        async for event in run_iter:
+            executor_id = getattr(event, "executor_id", None)
 
-        if event.type == "executor_invoked" and executor_id:
-            if current_step:
-                current_step.output = current_step.output or "Done"
-                await current_step.update()
+            if event.type == "executor_invoked" and executor_id:
+                if current_step:
+                    current_step.output = current_step.output or "Done"
+                    await current_step.update()
 
-            current_executor = executor_id
-            cfg = AGENT_CONFIG.get(executor_id, {"type": "run", "label": executor_id})
-            current_step = cl.Step(name=cfg["label"], type=cfg["type"])
-            current_step.output = ""
+                current_executor = executor_id
+                cfg = AGENT_CONFIG.get(executor_id, {"type": "run", "label": executor_id})
+                current_step = cl.Step(name=cfg["label"], type=cfg["type"])
+                current_step.output = ""
 
-            if isinstance(event.data, str) and event.data:
-                current_step.input = event.data
+                if isinstance(event.data, str) and event.data:
+                    current_step.input = event.data
 
-            await current_step.send()
+                await current_step.send()
 
-        elif event.type == "output":
-            text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
-            if text:
+            elif event.type == "output":
+                text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
+                if text:
+                    if current_step and executor_id == current_executor:
+                        current_step.output += text
+                    await msg.stream_token(text)
+
+            elif event.type == "handoff_sent":
+                if current_step:
+                    current_step.output += "\n\n*Handoff to next agent*"
+                    await current_step.update()
+
+            elif event.type == "executor_completed":
                 if current_step and executor_id == current_executor:
-                    current_step.output += text
-                await msg.stream_token(text)
+                    await current_step.update()
+                    current_step = None
+                    current_executor = None
 
-        elif event.type == "handoff_sent":
-            if current_step:
-                current_step.output += "\n\n*Handoff to next agent*"
-                await current_step.update()
+            elif event.type == "request_info":
+                pending_requests.append(event)
 
-        elif event.type == "executor_completed":
-            if current_step and executor_id == current_executor:
-                await current_step.update()
-                current_step = None
-                current_executor = None
-
-        elif event.type == "request_info":
-            pending_requests.append(event)
+    except asyncio.CancelledError:
+        if current_step:
+            current_step.output += "\n\n*Stopped by user*"
+            await current_step.update()
+        if not msg.content:
+            msg.content = "*Stopped.*"
+        await msg.update()
+        return []
 
     if current_step:
         await current_step.update()
@@ -259,6 +271,19 @@ async def _run_workflow(workflow, *, user_input: str | None = None, responses: d
     else:
         if pending_requests:
             await cl.Message(content="Too many approval rounds. Please try again.").send()
+
+
+@cl.on_stop
+async def on_stop():
+    """Handle user pressing Stop button — clean up pending state."""
+    cl.user_session.set("pending_handoff_request", None)
+
+
+@cl.on_chat_end
+async def on_chat_end():
+    """Clean up when chat session ends."""
+    cl.user_session.set("workflow", None)
+    cl.user_session.set("pending_handoff_request", None)
 
 
 def main():
