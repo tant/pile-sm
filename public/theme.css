@@ -1,0 +1,27 @@
+/* Pile SM custom theme */
+
+/* Step cards — softer colors */
+.step .step-header {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+/* Tool call steps — subtle background */
+.step[data-type="tool"] {
+    border-left: 3px solid #3b82f6;
+}
+
+/* LLM steps — thinking indicator */
+.step[data-type="llm"] {
+    border-left: 3px solid #8b5cf6;
+}
+
+/* Run steps — routing indicator */
+.step[data-type="run"] {
+    border-left: 3px solid #f59e0b;
+}
+
+/* Approval action buttons */
+.action-button {
+    font-weight: 600;
+}
