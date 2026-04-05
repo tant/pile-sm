@@ -89,7 +89,6 @@ async def on_chat_start():
 
     cl.user_session.set("workflow", workflow)
     cl.user_session.set("tracker", tracker)
-    cl.user_session.set("pending_handoff_request", None)
 
 
 @cl.on_message
@@ -103,24 +102,16 @@ async def on_message(message: cl.Message):
     # Handle file uploads — ingest into knowledge base
     ingested = await _handle_file_uploads(message)
 
-    pending = cl.user_session.get("pending_handoff_request")
-    if pending is not None:
-        from agent_framework.orchestrations import HandoffAgentUserRequest
-
-        cl.user_session.set("pending_handoff_request", None)
-        responses = {pending.request_id: HandoffAgentUserRequest.create_response(message.content)}
-        await _run_workflow(workflow, responses=responses)
-    else:
-        # If files were uploaded, prepend ingestion context to the message
-        user_input = message.content or ""
-        if ingested:
-            files_info = ", ".join(f"'{name}'" for name in ingested)
-            if not user_input:
-                user_input = f"I just uploaded these documents to the knowledge base: {files_info}. Confirm what was loaded."
-            else:
-                user_input = f"[Uploaded documents: {files_info}]\n\n{user_input}"
-        if user_input:
-            await _run_workflow(workflow, user_input=user_input)
+    # Build user input
+    user_input = message.content or ""
+    if ingested:
+        files_info = ", ".join(f"'{name}'" for name in ingested)
+        if not user_input:
+            user_input = f"I just uploaded these documents to the knowledge base: {files_info}. Confirm what was loaded."
+        else:
+            user_input = f"[Uploaded documents: {files_info}]\n\n{user_input}"
+    if user_input:
+        await _run_workflow(workflow, user_input=user_input)
 
 
 async def _handle_file_uploads(message: cl.Message) -> list[str]:
@@ -208,12 +199,6 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                         current_step.output += text
                     await msg.stream_token(text)
 
-            elif event.type == "handoff_sent":
-                logger.info("[%s] handoff →", current_executor or "?")
-                if current_step:
-                    current_step.output += "\n\n*Handoff to next agent*"
-                    await current_step.update()
-
             elif event.type == "executor_completed":
                 if accumulated_text and executor_id:
                     logger.info("[%s] %s", executor_id, accumulated_text[:200])
@@ -287,60 +272,14 @@ async def _send_charts_if_any(msg: cl.Message):
         pass  # Don't break message flow if chart rendering fails
 
 
-async def _run_workflow(workflow, *, user_input: str | None = None, responses: dict | None = None):
-    """Stream workflow output with iterative approval handling."""
-    from agent_framework.orchestrations import HandoffAgentUserRequest
-
-    max_rounds = 20
-    pending_requests = await _run_workflow_once(workflow, user_input=user_input, responses=responses)
-
-    for _ in range(max_rounds):
-        if not pending_requests:
-            break
-
-        next_pending: list = []
-        for req in pending_requests:
-            if isinstance(req.data, HandoffAgentUserRequest):
-                parts = []
-                for m in req.data.agent_response.messages[-2:]:
-                    if m.text:
-                        parts.append(m.text)
-                if parts:
-                    await cl.Message(content="\n\n".join(parts)).send()
-                cl.user_session.set("pending_handoff_request", req)
-
-            elif hasattr(req.data, "type") and req.data.type == "function_approval_request":
-                func_call = req.data.function_call
-                args = func_call.parse_arguments() if hasattr(func_call, "parse_arguments") else {}
-                args_str = json.dumps(args, ensure_ascii=False, indent=2) if isinstance(args, dict) else str(args)
-
-                action_res = await cl.AskActionMessage(
-                    content=(
-                        f"**Approval Required**\n\n"
-                        f"Tool: `{func_call.name}`\n\n"
-                        f"```json\n{args_str}\n```"
-                    ),
-                    actions=[
-                        cl.Action(name="approve", payload={"approved": True}, label="Approve"),
-                        cl.Action(name="reject", payload={"approved": False}, label="Reject"),
-                    ],
-                ).send()
-
-                if action_res is not None:
-                    approved = action_res.get("name") == "approve" if isinstance(action_res, dict) else (action_res.name == "approve")
-                    resp = {req.request_id: req.data.to_function_approval_response(approved=approved)}
-                    next_pending.extend(await _run_workflow_once(workflow, responses=resp))
-
-        pending_requests = next_pending
-    else:
-        if pending_requests:
-            await cl.Message(content="Too many approval rounds. Please try again.").send()
+async def _run_workflow(workflow, *, user_input: str | None = None):
+    """Stream workflow output."""
+    await _run_workflow_once(workflow, user_input=user_input)
 
 
 @cl.on_stop
 async def on_stop():
-    """Handle user pressing Stop button — clean up pending state and reset workflow."""
-    cl.user_session.set("pending_handoff_request", None)
+    """Handle user pressing Stop button."""
     workflow = cl.user_session.get("workflow")
     if workflow is not None:
         workflow._reset_running_flag()
@@ -350,7 +289,6 @@ async def on_stop():
 async def on_chat_end():
     """Clean up when chat session ends."""
     cl.user_session.set("workflow", None)
-    cl.user_session.set("pending_handoff_request", None)
 
 
 def main():

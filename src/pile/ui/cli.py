@@ -145,23 +145,17 @@ async def _run():
                 print(f"Workflow error: {e}", file=sys.stderr)
             continue
 
-        # Run interactive handoff workflow
-        pending_requests = []
+        # Run routed workflow
         try:
             async for event in workflow.run(user_input, stream=True):
                 if event.type == "output" and hasattr(event.data, "text") and event.data.text:
                     print(event.data.text, end="", flush=True)
-                elif event.type == "request_info":
-                    pending_requests.append(event)
         except KeyboardInterrupt:
             workflow._reset_running_flag()
             print("\n[Stopped]")
             continue
 
         print()  # newline after streaming
-
-        if not await _handle_pending_requests(workflow, pending_requests):
-            return
 
 
 def main():
