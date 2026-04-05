@@ -461,7 +461,7 @@ src/pile/
 │   ├── git.py          # Git specialist agent
 │   └── scrum.py        # Scrum Master agent (+ memory_search)
 ├── tools/
-│   ├── jira_tools.py   # Jira REST API tools + error handling
+│   ├── jira_tools.py   # 19 Jira REST API tools (11 read + 8 write)
 │   ├── git_tools.py    # Git CLI tools + input validation
 │   ├── memory_tools.py # Memory + knowledge base tools (6 tools)
 │   ├── browser_tools.py# Browser tools (6 tools, Playwright + Firefox)

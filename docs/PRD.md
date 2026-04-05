@@ -63,13 +63,20 @@ Xây dựng hệ thống multi-agent chạy **hoàn toàn local**, sử dụng L
 
 | ID | Tính năng | Mô tả |
 |---|---|---|
-| J-01 | Tìm kiếm issues | Tìm, lọc issues theo project/sprint/assignee/status bằng JQL |
-| J-02 | Xem chi tiết issue | Lấy thông tin đầy đủ: summary, description, status, assignee, comments |
-| J-03 | Xem sprint | Sprint hiện tại, backlog, velocity, burndown data |
-| J-04 | Tạo issue | Tạo mới issue với summary, description, type, priority, assignee |
-| J-05 | Cập nhật issue | Chuyển trạng thái (transition), thêm comment |
-| J-06 | Sprint report | Tổng hợp sprint progress: done, in-progress, blocked, remaining |
-| J-07 | Backlog grooming | Gợi ý sắp xếp ưu tiên backlog dựa trên dependencies, business value |
+| J-01 | Tìm kiếm issues | Tìm, lọc issues theo JQL, mặc định loại sub-tasks |
+| J-02 | Xem chi tiết issue | Summary, description, status, assignee, links, comments |
+| J-03 | Xem sprint | Sprint hiện tại/future/closed, sprint issues grouped by status |
+| J-04 | Board management | List boards, board detail (+ active sprint + counts), board config (columns, estimation) |
+| J-05 | Backlog | Xem backlog issues, đưa issues về backlog |
+| J-06 | Epic management | List epics trên board, xem issues trong epic |
+| J-07 | Tạo issue | Tạo mới issue với summary, description, type, priority, assignee |
+| J-08 | Cập nhật issue | Sửa fields (assignee, priority, story points, labels, summary, description) |
+| J-09 | Chuyển trạng thái | Transition issue sang status mới |
+| J-10 | Comment | Thêm comment vào issue |
+| J-11 | Sprint management | Tạo sprint mới, chuyển issues vào sprint |
+| J-12 | Link issues | Liên kết issues (Blocks, Relates, Duplicate) |
+| J-13 | Changelog | Lịch sử thay đổi issue (cho cycle time analysis) |
+| J-14 | Sprint report | Tổng hợp sprint progress: done, in-progress, blocked, remaining |
 
 ### 3.2 Git Integration (optional)
 

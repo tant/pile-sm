@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from pile.config import settings
-from pile.tools.jira_tools import jira_get_issue, jira_get_sprint, jira_get_sprint_issues, jira_search
+from pile.tools.jira_tools import (
+    jira_get_backlog,
+    jira_get_changelog,
+    jira_get_epics,
+    jira_get_issue,
+    jira_get_sprint,
+    jira_get_sprint_issues,
+    jira_search,
+)
 
 SCRUM_INSTRUCTIONS = """\
 You are an experienced Scrum Master assistant for project {project_key}.
@@ -52,7 +60,8 @@ Rules:
 
 def create_scrum_agent(client):
     """Create the Scrum Agent with Jira + optional Git + optional Memory tools."""
-    tools = [jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues]
+    tools = [jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues,
+             jira_get_backlog, jira_get_epics, jira_get_changelog]
 
     git_note = "Git is not configured — skip git-related analysis."
     if settings.git_repo_list:

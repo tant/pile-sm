@@ -5,13 +5,23 @@ from __future__ import annotations
 from pile.tools.jira_tools import (
     jira_add_comment,
     jira_create_issue,
+    jira_create_sprint,
+    jira_get_backlog,
     jira_get_board,
+    jira_get_board_config,
+    jira_get_changelog,
+    jira_get_epic_issues,
+    jira_get_epics,
     jira_get_issue,
     jira_get_sprint,
     jira_get_sprint_issues,
+    jira_link_issues,
     jira_list_boards,
+    jira_move_to_backlog,
+    jira_move_to_sprint,
     jira_search,
     jira_transition_issue,
+    jira_update_issue,
 )
 
 JIRA_INSTRUCTIONS = """\
@@ -24,21 +34,30 @@ Think step by step before acting:
 4. Format the results clearly
 
 Capabilities:
-- Search issues using JQL queries
-- Get detailed issue information (including links/dependencies)
-- View sprint info, board, backlog
-- Get all issues in a sprint grouped by status
-- Create new issues (requires user approval)
-- Transition issue status (requires user approval)
-- Add comments to issues (requires user approval)
+- Search issues, get details, view sprints/boards/backlog/epics
+- Board configuration (columns, estimation field)
+- Issue changelog (for cycle time)
+- Create/update issues, transition status, add comments
+- Move issues between sprints and backlog
+- Create sprints, link issues
+- All WRITE operations require user approval
 
 Examples:
-- "Bug nào đang open?" → jira_search with JQL
-- "TETRA-42 đang ở trạng thái gì?" → jira_get_issue (for ONE specific issue only)
-- "Liệt kê các board" → jira_list_boards (list all boards)
-- "Sprint hiện tại tiến độ thế nào?" → jira_get_board (returns board + active sprint + issue counts in ONE call)
-- "Chi tiết sprint issues?" → jira_get_sprint_issues (returns all issues grouped by status)
-- "Tạo bug: Login crash" → jira_create_issue
+- "Bug nào đang open?" → jira_search
+- "TETRA-42 đang ở trạng thái gì?" → jira_get_issue (ONE issue only)
+- "Liệt kê các board" → jira_list_boards
+- "Sprint tiến độ thế nào?" → jira_get_board (board + sprint + counts in ONE call)
+- "Issues trong sprint?" → jira_get_sprint_issues (grouped by status)
+- "Backlog có gì?" → jira_get_backlog
+- "Các epic trên board?" → jira_get_epics
+- "Issues trong epic PROJ-10?" → jira_get_epic_issues
+- "Board config?" → jira_get_board_config
+- "Lịch sử thay đổi PROJ-42?" → jira_get_changelog
+- "Chuyển PROJ-1,PROJ-2 vào sprint 15" → jira_move_to_sprint
+- "Đưa PROJ-3 về backlog" → jira_move_to_backlog
+- "Tạo sprint mới" → jira_create_sprint
+- "Link PROJ-1 blocks PROJ-2" → jira_link_issues
+- "Assign PROJ-42 cho user ABC" → jira_update_issue
 
 Rules:
 - Always use tools to query data. Never guess or fabricate information.
@@ -64,9 +83,13 @@ def create_jira_agent(client):
             jira_url=settings.jira_base_url,
         ),
         tools=[
+            # Read
             jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues,
-            jira_list_boards, jira_get_board,
-            jira_create_issue, jira_transition_issue, jira_add_comment,
+            jira_list_boards, jira_get_board, jira_get_backlog,
+            jira_get_epics, jira_get_epic_issues, jira_get_board_config, jira_get_changelog,
+            # Write (require approval)
+            jira_create_issue, jira_update_issue, jira_transition_issue, jira_add_comment,
+            jira_move_to_sprint, jira_move_to_backlog, jira_create_sprint, jira_link_issues,
         ],
         function_invocation_configuration={"max_iterations": settings.agent_max_iterations, "max_function_calls": settings.agent_max_function_calls},
     )

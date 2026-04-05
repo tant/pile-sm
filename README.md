@@ -10,7 +10,7 @@ Built on [Microsoft Agent Framework](https://github.com/microsoft/agent-framewor
 
 | | Feature | Detail |
 |---|---|---|
-| **Jira** | Read + Write | Search, CRUD issues, sprint tracking, board view. Write ops require user approval |
+| **Jira** | 19 tools | Search, CRUD issues, sprints, boards, backlog, epics, changelog, linking. Write ops require approval |
 | **Git** | Read-only | Commit history, branches, diffs, blame. Private repo support |
 | **Scrum** | 17 capabilities | Standup, sprint review, retro, workload balance, cycle time, data quality audit, delay alerts, stakeholder summary... |
 | **Memory** | Remember & Forget | Long-term memory across sessions. Semantic search via ChromaDB + Ollama embeddings |
@@ -124,7 +124,7 @@ graph TD
 
     subgraph Orchestration["Orchestration Layer — Microsoft Agent Framework"]
         Triage["<b>Triage Agent</b><br/><small>Router + Memory + Browser ops</small>"]
-        Jira["<b>Jira Agent</b><br/><small>8 tools · read + write</small>"]
+        Jira["<b>Jira Agent</b><br/><small>19 tools · read + write</small>"]
         Git["<b>Git Agent</b><br/><small>5 tools · read-only</small>"]
         Scrum["<b>Scrum Agent</b><br/><small>Jira + Git + Memory + Browser</small>"]
     end
