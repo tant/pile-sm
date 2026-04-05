@@ -193,6 +193,8 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                 pending_requests.append(event)
 
     except asyncio.CancelledError:
+        # Reset workflow running flag so next message can proceed
+        workflow._reset_running_flag()
         if current_step:
             current_step.output += "\n\n*Stopped by user*"
             await current_step.update()
@@ -280,8 +282,11 @@ async def _run_workflow(workflow, *, user_input: str | None = None, responses: d
 
 @cl.on_stop
 async def on_stop():
-    """Handle user pressing Stop button — clean up pending state."""
+    """Handle user pressing Stop button — clean up pending state and reset workflow."""
     cl.user_session.set("pending_handoff_request", None)
+    workflow = cl.user_session.get("workflow")
+    if workflow is not None:
+        workflow._reset_running_flag()
 
 
 @cl.on_chat_end
