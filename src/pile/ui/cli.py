@@ -113,7 +113,7 @@ async def _run():
     print("Slash commands: /standup, /planning\n")
 
     try:
-        workflow = create_workflow()
+        workflow, _tracker = create_workflow()
     except Exception as e:
         print(f"Failed to initialize: {e}", file=sys.stderr)
         return

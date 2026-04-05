@@ -58,7 +58,7 @@ Rules:
 """
 
 
-def create_scrum_agent(client):
+def create_scrum_agent(client, middleware=None):
     """Create the Scrum Agent with Jira + optional Git + optional Memory tools."""
     tools = [jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues,
              jira_get_backlog, jira_get_epics, jira_get_changelog]
@@ -102,5 +102,5 @@ def create_scrum_agent(client):
             browser_note=browser_note,
         ),
         tools=tools,
-
+        middleware=middleware,
     )

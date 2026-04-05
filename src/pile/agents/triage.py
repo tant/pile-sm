@@ -70,7 +70,7 @@ Always respond in the same language as the user (Vietnamese or English).
 """
 
 
-def create_triage_agent(client):
+def create_triage_agent(client, middleware=None):
     """Create the Triage Agent — handles memory ops directly, routes the rest."""
     tools = []
     instructions = TRIAGE_INSTRUCTIONS_NO_MEMORY
@@ -119,5 +119,5 @@ def create_triage_agent(client):
         description="Routes user requests to specialist agents (Jira, Git, Scrum) and handles memory/knowledge operations directly",
         instructions=instructions,
         tools=tools,
-
+        middleware=middleware,
     )

@@ -31,7 +31,7 @@ Rules:
 """
 
 
-def create_git_agent(client):
+def create_git_agent(client, middleware=None):
     """Create a Git Agent. Returns None if no git repos are configured."""
     repos = settings.git_repo_list
     if not repos:
@@ -47,5 +47,5 @@ def create_git_agent(client):
         description="Git specialist: commits, branches, diffs, blame",
         instructions=GIT_INSTRUCTIONS.format(repos=repos_str),
         tools=[git_log, git_diff, git_branch_list, git_show, git_blame],
-
+        middleware=middleware,
     )

@@ -65,12 +65,13 @@ async def on_chat_start():
         await cl.Message(content=warning).send()
 
     try:
-        workflow = create_workflow()
+        workflow, tracker = create_workflow()
     except Exception as e:
         await cl.Message(content=f"Failed to initialize: {e}").send()
         return
 
     cl.user_session.set("workflow", workflow)
+    cl.user_session.set("tracker", tracker)
     cl.user_session.set("pending_handoff_request", None)
 
 
@@ -185,6 +186,20 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
 
             elif event.type == "executor_completed":
                 if current_step and executor_id == current_executor:
+                    # Show tool calls made during this agent's execution
+                    tracker = cl.user_session.get("tracker")
+                    if tracker:
+                        for call in tracker.drain():
+                            tool_step = cl.Step(
+                                name=call.name,
+                                type="tool",
+                            )
+                            tool_step.input = str(call.arguments) if call.arguments else ""
+                            tool_step.output = call.result or ""
+                            tool_step.start = str(call.timestamp)
+                            await tool_step.send()
+                            await tool_step.update()
+
                     await current_step.update()
                     current_step = None
                     current_executor = None

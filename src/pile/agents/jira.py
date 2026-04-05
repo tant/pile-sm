@@ -71,7 +71,7 @@ Rules:
 """
 
 
-def create_jira_agent(client):
+def create_jira_agent(client, middleware=None):
     """Create a Jira Agent with read + write tools."""
     from pile.config import settings
 
@@ -91,5 +91,5 @@ def create_jira_agent(client):
             jira_create_issue, jira_update_issue, jira_transition_issue, jira_add_comment,
             jira_move_to_sprint, jira_move_to_backlog, jira_create_sprint, jira_link_issues,
         ],
-
+        middleware=middleware,
     )
