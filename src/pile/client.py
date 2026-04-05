@@ -12,7 +12,21 @@ def create_client():
       This avoids the native OllamaChatClient bug with HandoffBuilder (#4402).
     - "openai": OpenAI-compat client for LM Studio or any compatible endpoint.
     - "ollama-native": Native Ollama client. Single-agent only, no workflows.
+
+    Applies function invocation limits (max_iterations, max_function_calls) from config
+    to prevent tool call loops with small models.
     """
+    client = _create_raw_client()
+
+    # Apply tool call limits to prevent infinite loops
+    client.function_invocation_configuration["max_iterations"] = settings.agent_max_iterations
+    client.function_invocation_configuration["max_function_calls"] = settings.agent_max_function_calls
+
+    return client
+
+
+def _create_raw_client():
+    """Create the underlying LLM client without limits applied."""
     if settings.llm_provider in ("ollama", "openai"):
         from agent_framework.openai import OpenAIChatCompletionClient
 

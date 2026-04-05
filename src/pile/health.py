@@ -14,8 +14,9 @@ def check_ollama() -> str | None:
         resp = httpx.get(f"{host}/api/tags", timeout=5.0)
         resp.raise_for_status()
         models = [m["name"] for m in resp.json().get("models", [])]
-        if settings.ollama_model_id not in models:
-            return f"Model '{settings.ollama_model_id}' not found on {host}. Available: {', '.join(models)}"
+        model_id = settings.ollama_model_id
+        if model_id not in models and f"{model_id}:latest" not in models:
+            return f"Model '{model_id}' not found on {host}. Available: {', '.join(models)}"
         return None
     except httpx.ConnectError:
         return f"Cannot connect to Ollama at {host}. Is the server running?"
@@ -88,10 +89,12 @@ def check_embedding_model() -> str | None:
         resp = httpx.get(f"{host}/api/tags", timeout=5.0)
         resp.raise_for_status()
         models = [m["name"] for m in resp.json().get("models", [])]
-        if settings.embedding_model_id not in models:
+        model_id = settings.embedding_model_id
+        # Match with or without :latest tag
+        if model_id not in models and f"{model_id}:latest" not in models:
             return (
-                f"Embedding model '{settings.embedding_model_id}' not found on {host}. "
-                f"Run: ollama pull {settings.embedding_model_id}"
+                f"Embedding model '{model_id}' not found on {host}. "
+                f"Run: ollama pull {model_id}"
             )
         return None
     except httpx.ConnectError:

@@ -102,5 +102,5 @@ def create_scrum_agent(client):
             browser_note=browser_note,
         ),
         tools=tools,
-        function_invocation_configuration={"max_iterations": settings.agent_max_iterations, "max_function_calls": settings.agent_max_function_calls},
+
     )

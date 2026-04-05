@@ -91,5 +91,5 @@ def create_jira_agent(client):
             jira_create_issue, jira_update_issue, jira_transition_issue, jira_add_comment,
             jira_move_to_sprint, jira_move_to_backlog, jira_create_sprint, jira_link_issues,
         ],
-        function_invocation_configuration={"max_iterations": settings.agent_max_iterations, "max_function_calls": settings.agent_max_function_calls},
+
     )
