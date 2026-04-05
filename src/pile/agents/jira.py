@@ -9,6 +9,7 @@ from pile.tools.jira_tools import (
     jira_get_issue,
     jira_get_sprint,
     jira_get_sprint_issues,
+    jira_list_boards,
     jira_search,
     jira_transition_issue,
 )
@@ -34,6 +35,7 @@ Capabilities:
 Examples:
 - "Bug nào đang open?" → jira_search with JQL
 - "TETRA-42 đang ở trạng thái gì?" → jira_get_issue (for ONE specific issue only)
+- "Liệt kê các board" → jira_list_boards (list all boards)
 - "Sprint hiện tại tiến độ thế nào?" → jira_get_board (returns board + active sprint + issue counts in ONE call)
 - "Chi tiết sprint issues?" → jira_get_sprint_issues (returns all issues grouped by status)
 - "Tạo bug: Login crash" → jira_create_issue
@@ -62,7 +64,8 @@ def create_jira_agent(client):
             jira_url=settings.jira_base_url,
         ),
         tools=[
-            jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues, jira_get_board,
+            jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues,
+            jira_list_boards, jira_get_board,
             jira_create_issue, jira_transition_issue, jira_add_comment,
         ],
         function_invocation_configuration={"max_iterations": settings.agent_max_iterations, "max_function_calls": settings.agent_max_function_calls},

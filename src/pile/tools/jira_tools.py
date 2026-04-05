@@ -188,10 +188,31 @@ def jira_get_sprint_issues(
 
 
 @_safe_jira_call
+def jira_list_boards(
+    project_key: Annotated[str | None, Field(description="Project key to filter (optional, lists all boards if not given)")] = None,
+) -> str:
+    """List all Jira boards, optionally filtered by project."""
+    client = _jira_client()
+    params: dict = {"maxResults": 50}
+    if project_key:
+        params["projectKeyOrId"] = project_key
+    resp = client.get("/rest/agile/1.0/board", params=params)
+    resp.raise_for_status()
+    boards = resp.json().get("values", [])
+    if not boards:
+        return f"No boards found."
+    lines = [f"**{len(boards)} boards found:**"]
+    for b in boards:
+        project = b.get("location", {}).get("projectKey", "")
+        lines.append(f"- **{b['name']}** (id: {b['id']}, type: {b['type']}, project: {project})")
+    return "\n".join(lines)
+
+
+@_safe_jira_call
 def jira_get_board(
     project_key: Annotated[str | None, Field(description="Project key (uses configured default if not given)")] = None,
 ) -> str:
-    """Get board info with active sprint summary. Returns board, sprint, and issue counts in one call."""
+    """Get board detail with active sprint summary. Returns board, sprint, and issue counts in one call."""
     client = _jira_client()
     key = project_key or settings.jira_project_key
 
