@@ -8,7 +8,7 @@ from pile.config import settings
 
 
 def check_ollama() -> str | None:
-    """Check if Ollama server is reachable. Returns error message or None."""
+    """Check if Ollama server is reachable and model available."""
     host = settings.ollama_host
     try:
         resp = httpx.get(f"{host}/api/tags", timeout=5.0)
@@ -23,8 +23,23 @@ def check_ollama() -> str | None:
         return f"Ollama health check failed: {e}"
 
 
+def check_openai() -> str | None:
+    """Check if OpenAI-compatible endpoint is reachable."""
+    base_url = settings.openai_base_url.rstrip("/")
+    try:
+        resp = httpx.get(f"{base_url}/models", headers={"Authorization": f"Bearer {settings.openai_api_key}"}, timeout=5.0)
+        if resp.status_code == 401:
+            return f"OpenAI endpoint auth failed at {base_url}. Check OPENAI_API_KEY."
+        resp.raise_for_status()
+        return None
+    except httpx.ConnectError:
+        return f"Cannot connect to OpenAI endpoint at {base_url}. Is the server running?"
+    except Exception as e:
+        return f"OpenAI health check failed: {e}"
+
+
 def check_jira() -> str | None:
-    """Check if Jira is reachable with valid credentials. Returns error message or None."""
+    """Check if Jira is reachable with valid credentials."""
     if not settings.jira_email or not settings.jira_api_token:
         return "JIRA_EMAIL and JIRA_API_TOKEN must be set in .env"
     try:
@@ -47,7 +62,7 @@ def check_jira() -> str | None:
 
 
 def check_embedding_model() -> str | None:
-    """Check if the embedding model is available on Ollama. Returns error message or None."""
+    """Check if the embedding model is available on its Ollama host."""
     if not settings.memory_enabled:
         return None
     host = settings.embedding_ollama_host
@@ -68,7 +83,7 @@ def check_embedding_model() -> str | None:
 
 
 def check_browser() -> str | None:
-    """Check if Playwright Firefox browser is installed. Returns error message or None."""
+    """Check if Playwright Firefox browser is installed."""
     if not settings.browser_enabled:
         return None
     try:
@@ -87,25 +102,35 @@ def check_browser() -> str | None:
 
 
 def run_health_checks() -> list[str]:
-    """Run all health checks. Returns list of error messages (empty = all OK)."""
+    """Run all health checks based on configured providers."""
     errors = []
 
-    # Only check Ollama if using ollama provider
+    # LLM — check the provider that's actually configured
     if settings.llm_provider in ("ollama", "ollama-native"):
         err = check_ollama()
         if err:
             errors.append(err)
+    elif settings.llm_provider == "openai":
+        err = check_openai()
+        if err:
+            errors.append(err)
 
+    # Jira
     err = check_jira()
     if err:
         errors.append(err)
 
-    err = check_embedding_model()
-    if err:
-        errors.append(err)
+    # Embedding — only check if memory enabled AND Ollama is reachable
+    # (embedding always uses Ollama, even when LLM uses OpenAI provider)
+    if settings.memory_enabled:
+        err = check_embedding_model()
+        if err:
+            errors.append(err)
 
-    err = check_browser()
-    if err:
-        errors.append(err)
+    # Browser
+    if settings.browser_enabled:
+        err = check_browser()
+        if err:
+            errors.append(err)
 
     return errors
