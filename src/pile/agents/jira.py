@@ -6,6 +6,7 @@ from pile.tools.jira_tools import (
     jira_add_comment,
     jira_create_issue,
     jira_create_sprint,
+    jira_curl_command,
     jira_get_backlog,
     jira_get_board,
     jira_get_board_config,
@@ -59,16 +60,11 @@ Examples:
 - "Link PROJ-1 blocks PROJ-2" → jira_link_issues
 - "Assign PROJ-42 cho user ABC" → jira_update_issue
 
-Curl command mode:
-When user asks for "lệnh curl", "curl command", "cho tôi lệnh", "API command", or similar — do NOT call any tool.
-Instead, generate the equivalent curl command using:
-  - Base URL: {jira_url}
-  - Auth: -u "$JIRA_EMAIL:$JIRA_API_TOKEN"
-  - Headers: -H "Accept: application/json" -H "Content-Type: application/json"
-  - Agile API: /rest/agile/1.0/...
-  - Platform API: /rest/api/3/...
-Example: curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{jira_url}/rest/agile/1.0/board"
-If user pastes API response JSON, analyze it and discuss — do NOT call tools for that data.
+Curl mode:
+- "cho tôi lệnh", "curl command", "lệnh curl" → call jira_curl_command tool with the matching action
+- "cho tôi lệnh lấy active sprint" → jira_curl_command(action="active_sprint")
+- "lệnh lấy board" → jira_curl_command(action="list_boards")
+- If user pastes JSON data, analyze it directly — do NOT call other tools.
 
 Rules:
 - Always use tools to query data. Never guess or fabricate information.
@@ -98,6 +94,8 @@ def create_jira_agent(client, middleware=None):
             jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues,
             jira_list_boards, jira_get_board, jira_get_backlog,
             jira_get_epics, jira_get_epic_issues, jira_get_board_config, jira_get_changelog,
+            # Curl
+            jira_curl_command,
             # Write (require approval)
             jira_create_issue, jira_update_issue, jira_transition_issue, jira_add_comment,
             jira_move_to_sprint, jira_move_to_backlog, jira_create_sprint, jira_link_issues,

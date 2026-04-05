@@ -58,6 +58,34 @@ def _safe_jira_call(func):
     return wrapper
 
 
+_CURL_COMMANDS = {
+    "list_boards": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/agile/1.0/board"',
+    "get_board": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/agile/1.0/board/{{BOARD_ID}}"',
+    "active_sprint": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/agile/1.0/board/{{BOARD_ID}}/sprint?state=active"',
+    "sprint_issues": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/agile/1.0/sprint/{{SPRINT_ID}}/issue"',
+    "search": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/api/3/search/jql?jql={{JQL}}&maxResults=10"',
+    "get_issue": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/api/3/issue/{{ISSUE_KEY}}"',
+    "backlog": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/agile/1.0/board/{{BOARD_ID}}/backlog"',
+    "epics": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/agile/1.0/board/{{BOARD_ID}}/epic"',
+    "board_config": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/agile/1.0/board/{{BOARD_ID}}/configuration"',
+    "changelog": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/api/3/issue/{{ISSUE_KEY}}/changelog"',
+    "create_issue": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" -H "Content-Type: application/json" -X POST "{base}/rest/api/3/issue" -d \'{{JSON_BODY}}\'',
+    "transition": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" -H "Content-Type: application/json" -X POST "{base}/rest/api/3/issue/{{ISSUE_KEY}}/transitions" -d \'{{JSON_BODY}}\'',
+    "myself": 'curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{base}/rest/api/3/myself"',
+}
+
+
+def jira_curl_command(
+    action: Annotated[str, Field(description="Action: list_boards, get_board, active_sprint, sprint_issues, search, get_issue, backlog, epics, board_config, changelog, create_issue, transition, myself")],
+) -> str:
+    """Generate a curl command for a Jira API action. User can copy and run it manually."""
+    template = _CURL_COMMANDS.get(action)
+    if not template:
+        available = ", ".join(_CURL_COMMANDS.keys())
+        return f"Unknown action '{action}'. Available: {available}"
+    return template.format(base=settings.jira_base_url)
+
+
 @_safe_jira_call
 def jira_search(
     jql: Annotated[str, Field(description="JQL query string, e.g. 'project=TETRA AND sprint in openSprints()'")],
