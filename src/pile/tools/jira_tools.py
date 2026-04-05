@@ -62,8 +62,11 @@ def _safe_jira_call(func):
 def jira_search(
     jql: Annotated[str, Field(description="JQL query string, e.g. 'project=TETRA AND sprint in openSprints()'")],
     max_results: Annotated[int, Field(description="Maximum number of results to return")] = 10,
+    include_subtasks: Annotated[bool, Field(description="Include sub-tasks in results (default: false, only work items)")] = False,
 ) -> str:
-    """Search Jira issues using JQL. Returns a summary list of matching issues."""
+    """Search Jira issues using JQL. By default excludes sub-tasks — set include_subtasks=true to include them."""
+    if not include_subtasks and "issuetype" not in jql.lower():
+        jql = f"({jql}) AND issuetype not in subtaskIssueTypes()"
     client = _jira_client()
     resp = client.get(
         "/rest/api/3/search/jql",
@@ -155,8 +158,9 @@ def jira_get_sprint(
 def jira_get_sprint_issues(
     sprint_id: Annotated[int, Field(description="Sprint ID")],
     max_results: Annotated[int, Field(description="Maximum number of results")] = 50,
+    include_subtasks: Annotated[bool, Field(description="Include sub-tasks (default: false, only work items)")] = False,
 ) -> str:
-    """Get all issues in a specific sprint, grouped by status."""
+    """Get work items in a sprint, grouped by status. Excludes sub-tasks by default."""
     client = _jira_client()
     resp = client.get(
         f"/rest/agile/1.0/sprint/{sprint_id}/issue",
@@ -164,13 +168,15 @@ def jira_get_sprint_issues(
     )
     resp.raise_for_status()
     issues = resp.json().get("issues", [])
+    if not include_subtasks:
+        issues = [i for i in issues if not i["fields"]["issuetype"].get("subtask", False)]
     if not issues:
         return "No issues in this sprint."
     by_status: dict[str, list] = {}
     for issue in issues:
         status = issue["fields"]["status"]["name"]
         by_status.setdefault(status, []).append(issue)
-    lines = [f"**Sprint {sprint_id}** — {len(issues)} issues total"]
+    lines = [f"**Sprint {sprint_id}** — {len(issues)} work items"]
     for status, items in sorted(by_status.items()):
         lines.append(f"\n### {status} ({len(items)})")
         for i in items:
@@ -213,16 +219,16 @@ def jira_get_board(
             if s.get("goal"):
                 lines.append(f"  Goal: {s['goal']}")
 
-            # Auto-fetch sprint issue counts
+            # Auto-fetch sprint issue counts (work items only, exclude sub-tasks)
             try:
                 resp = client.get(f"/rest/agile/1.0/sprint/{s['id']}/issue", params={"maxResults": 100})
                 resp.raise_for_status()
-                issues = resp.json().get("issues", [])
+                issues = [i for i in resp.json().get("issues", []) if not i["fields"]["issuetype"].get("subtask", False)]
                 by_status: dict[str, int] = {}
                 for issue in issues:
                     status = issue["fields"]["status"]["name"]
                     by_status[status] = by_status.get(status, 0) + 1
-                lines.append(f"  Total issues: {len(issues)}")
+                lines.append(f"  Work items: {len(issues)} (excluding sub-tasks)")
                 for status, count in sorted(by_status.items()):
                     lines.append(f"  - {status}: {count}")
             except Exception:
