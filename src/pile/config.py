@@ -67,12 +67,6 @@ class Settings(BaseSettings):
     memory_enabled: bool = True
     memory_store_path: str = "~/.pile/chromadb"
     embedding_model_id: str = "nomic-embed-text"
-    embedding_host: str = ""  # Ollama host for embeddings (defaults to ollama_host if empty)
-
-    @property
-    def embedding_ollama_host(self) -> str:
-        """Ollama host used for embeddings. Falls back to ollama_host."""
-        return self.embedding_host or self.ollama_host
 
     # Browser (Playwright + Firefox)
     browser_enabled: bool = True

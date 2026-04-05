@@ -62,10 +62,28 @@ def check_jira() -> str | None:
 
 
 def check_embedding_model() -> str | None:
-    """Check if the embedding model is available on its Ollama host."""
+    """Check if the embedding model is available on the configured provider."""
     if not settings.memory_enabled:
         return None
-    host = settings.embedding_ollama_host
+
+    if settings.llm_provider == "openai":
+        # OpenAI-compatible: check /v1/models endpoint
+        base_url = settings.openai_base_url.rstrip("/")
+        try:
+            resp = httpx.get(
+                f"{base_url}/models",
+                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            return None
+        except httpx.ConnectError:
+            return f"Cannot check embedding model — endpoint at {base_url} unreachable."
+        except Exception as e:
+            return f"Embedding model health check failed: {e}"
+
+    # Ollama provider: check /api/tags
+    host = settings.ollama_host
     try:
         resp = httpx.get(f"{host}/api/tags", timeout=5.0)
         resp.raise_for_status()

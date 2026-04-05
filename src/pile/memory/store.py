@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 import chromadb
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+from chromadb.api.types import EmbeddingFunction
 
 from pile.config import settings
 
@@ -24,9 +24,19 @@ def _get_client() -> chromadb.ClientAPI:
     return _client
 
 
-def _embedding_fn() -> OllamaEmbeddingFunction:
+def _embedding_fn() -> EmbeddingFunction:
+    """Create embedding function based on LLM provider config."""
+    if settings.llm_provider == "openai":
+        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+        return OpenAIEmbeddingFunction(
+            api_base=settings.openai_base_url,
+            api_key=settings.openai_api_key,
+            model_name=settings.embedding_model_id,
+        )
+
+    from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
     return OllamaEmbeddingFunction(
-        url=f"{settings.embedding_ollama_host}/api/embed",
+        url=f"{settings.ollama_host}/api/embed",
         model_name=settings.embedding_model_id,
     )
 
