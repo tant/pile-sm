@@ -26,7 +26,7 @@ def _get_client() -> chromadb.ClientAPI:
 
 def _embedding_fn() -> OllamaEmbeddingFunction:
     return OllamaEmbeddingFunction(
-        url=f"{settings.ollama_host}/api/embed",
+        url=f"{settings.embedding_ollama_host}/api/embed",
         model_name=settings.embedding_model_id,
     )
 

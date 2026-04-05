@@ -50,7 +50,7 @@ def check_embedding_model() -> str | None:
     """Check if the embedding model is available on Ollama. Returns error message or None."""
     if not settings.memory_enabled:
         return None
-    host = settings.ollama_host
+    host = settings.embedding_ollama_host
     try:
         resp = httpx.get(f"{host}/api/tags", timeout=5.0)
         resp.raise_for_status()
