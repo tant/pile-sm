@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     memory_store_path: str = "~/.pile/chromadb"
     embedding_model_id: str = "nomic-embed-text"
 
+    # Agent limits (prevent tool call loops, tune per model capability)
+    agent_max_iterations: int = 5
+    agent_max_function_calls: int = 15
+
     # Browser (Playwright + Firefox)
     browser_enabled: bool = True
     browser_profile_path: str = "~/.pile/browser"

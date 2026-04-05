@@ -47,5 +47,5 @@ def create_git_agent(client):
         description="Git specialist: commits, branches, diffs, blame",
         instructions=GIT_INSTRUCTIONS.format(repos=repos_str),
         tools=[git_log, git_diff, git_branch_list, git_show, git_blame],
-        function_invocation_configuration={"max_iterations": 5, "max_function_calls": 10},
+        function_invocation_configuration={"max_iterations": settings.agent_max_iterations, "max_function_calls": settings.agent_max_function_calls},
     )
