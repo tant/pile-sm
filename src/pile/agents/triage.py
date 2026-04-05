@@ -119,4 +119,5 @@ def create_triage_agent(client):
         description="Routes user requests to specialist agents (Jira, Git, Scrum) and handles memory/knowledge operations directly",
         instructions=instructions,
         tools=tools,
+        function_invocation_configuration={"max_iterations": 5, "max_function_calls": 10},
     )

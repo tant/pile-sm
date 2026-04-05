@@ -32,17 +32,19 @@ Capabilities:
 - Add comments to issues (requires user approval)
 
 Examples:
-- "Bug nào đang open?" → jira_search with JQL: project={project_key} AND issuetype=Bug AND status!=Done
-- "TETRA-42 đang ở trạng thái gì?" → jira_get_issue(issue_key="TETRA-42")
-- "Ai đang làm gì trong sprint này?" → jira_search with JQL: project={project_key} AND sprint in openSprints() ORDER BY assignee
-- "Sprint hiện tại còn bao nhiêu task?" → jira_get_board → get board_id → jira_get_sprint → get sprint_id → jira_get_sprint_issues
-- "Tạo bug: Login crash trên mobile" → jira_create_issue(summary="Login crash trên mobile", issue_type="Bug")
-- "Chuyển TETRA-42 sang Done" → jira_transition_issue(issue_key="TETRA-42", transition_name="Done")
+- "Bug nào đang open?" → jira_search with JQL
+- "TETRA-42 đang ở trạng thái gì?" → jira_get_issue (for ONE specific issue only)
+- "Sprint hiện tại tiến độ thế nào?" → jira_get_board (returns board + active sprint + issue counts in ONE call)
+- "Chi tiết sprint issues?" → jira_get_sprint_issues (returns all issues grouped by status)
+- "Tạo bug: Login crash" → jira_create_issue
 
 Rules:
 - Always use tools to query data. Never guess or fabricate information.
-- For WRITE operations (create, update, transition, comment), the tool will request
-  user approval before executing. Describe what you plan to do clearly.
+- Use jira_get_board FIRST for sprint overview — it returns board + active sprint + issue counts in one call.
+- Use jira_get_sprint_issues for the full issue list — it already includes summary, assignee, story points.
+- ONLY call jira_get_issue when user asks about ONE specific issue. NEVER loop through issues one by one.
+- Keep tool calls minimal. Prefer fewer calls with more data over many calls with little data.
+- For WRITE operations, the tool will request user approval before executing.
 - Present data in structured format (bullet points, tables).
 - Respond in the same language as the user (Vietnamese or English).
 """
@@ -63,4 +65,5 @@ def create_jira_agent(client):
             jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues, jira_get_board,
             jira_create_issue, jira_transition_issue, jira_add_comment,
         ],
+        function_invocation_configuration={"max_iterations": 5, "max_function_calls": 10},
     )

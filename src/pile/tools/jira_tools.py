@@ -183,21 +183,55 @@ def jira_get_sprint_issues(
 
 @_safe_jira_call
 def jira_get_board(
-    project_key: Annotated[str, Field(description="Project key, e.g. TETRA")] = "TETRA",
+    project_key: Annotated[str | None, Field(description="Project key (uses configured default if not given)")] = None,
 ) -> str:
-    """Get Jira board information for a project."""
+    """Get board info with active sprint summary. Returns board, sprint, and issue counts in one call."""
     client = _jira_client()
-    resp = client.get(
-        "/rest/agile/1.0/board",
-        params={"projectKeyOrId": project_key, "maxResults": 5},
-    )
+    key = project_key or settings.jira_project_key
+
+    # Get board
+    resp = client.get("/rest/agile/1.0/board", params={"projectKeyOrId": key, "maxResults": 5})
     resp.raise_for_status()
     boards = resp.json().get("values", [])
     if not boards:
-        return f"No boards found for project {project_key}."
-    lines = []
-    for b in boards:
-        lines.append(f"- **{b['name']}** (id: {b['id']}, type: {b['type']})")
+        return f"No boards found for project {key}."
+
+    board = boards[0]
+    lines = [f"**Board: {board['name']}** (id: {board['id']}, type: {board['type']})"]
+
+    # Auto-fetch active sprint
+    try:
+        resp = client.get(f"/rest/agile/1.0/board/{board['id']}/sprint", params={"state": "active", "maxResults": 1})
+        resp.raise_for_status()
+        sprints = resp.json().get("values", [])
+        if sprints:
+            s = sprints[0]
+            start = s.get("startDate", "N/A")[:10] if s.get("startDate") else "N/A"
+            end = s.get("endDate", "N/A")[:10] if s.get("endDate") else "N/A"
+            lines.append(f"\n**Active Sprint: {s['name']}** (id: {s['id']})")
+            lines.append(f"  Start: {start} | End: {end}")
+            if s.get("goal"):
+                lines.append(f"  Goal: {s['goal']}")
+
+            # Auto-fetch sprint issue counts
+            try:
+                resp = client.get(f"/rest/agile/1.0/sprint/{s['id']}/issue", params={"maxResults": 100})
+                resp.raise_for_status()
+                issues = resp.json().get("issues", [])
+                by_status: dict[str, int] = {}
+                for issue in issues:
+                    status = issue["fields"]["status"]["name"]
+                    by_status[status] = by_status.get(status, 0) + 1
+                lines.append(f"  Total issues: {len(issues)}")
+                for status, count in sorted(by_status.items()):
+                    lines.append(f"  - {status}: {count}")
+            except Exception:
+                pass
+        else:
+            lines.append("\nNo active sprint.")
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 

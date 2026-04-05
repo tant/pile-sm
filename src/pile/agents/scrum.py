@@ -45,6 +45,7 @@ You have direct access to Jira tools — use them to gather data before analyzin
 Rules:
 - Provide actionable insights, not just raw data.
 - Back up observations with specific data points.
+- Keep tool calls minimal: use jira_get_sprint_issues for sprint overview (already has all issues with status, assignee, story points). NEVER call jira_get_issue in a loop for each issue.
 - Respond in the same language as the user (Vietnamese or English).
 """
 
@@ -92,4 +93,5 @@ def create_scrum_agent(client):
             browser_note=browser_note,
         ),
         tools=tools,
+        function_invocation_configuration={"max_iterations": 5, "max_function_calls": 15},
     )
