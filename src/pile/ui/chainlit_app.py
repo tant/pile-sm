@@ -170,17 +170,26 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     else:
         run_iter = workflow.run(responses=responses, stream=True, include_status_events=True)
 
+    accumulated_text = ""
+
     try:
         async for event in run_iter:
             executor_id = getattr(event, "executor_id", None)
-            # Debug: log every event
-            _log_event(event, executor_id)
 
             if event.type == "executor_invoked" and executor_id:
-                if current_step:
-                    current_step.output = current_step.output or "Done"
-                    await current_step.update()
+                # Log previous agent's accumulated output
+                if accumulated_text and current_executor:
+                    logger.info("[%s] %s", current_executor, accumulated_text[:200])
+                accumulated_text = ""
 
+                if current_step:
+                    if current_step.output:
+                        await current_step.update()
+                    else:
+                        await current_step.remove()
+                    current_step = None
+
+                logger.info(">>> %s", executor_id)
                 current_executor = executor_id
                 cfg = AGENT_CONFIG.get(executor_id, {"type": "run", "label": executor_id})
                 current_step = cl.Step(name=cfg["label"], type=cfg["type"])
@@ -194,16 +203,21 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
             elif event.type == "output":
                 text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
                 if text:
+                    accumulated_text += text
                     if current_step and executor_id == current_executor:
                         current_step.output += text
                     await msg.stream_token(text)
 
             elif event.type == "handoff_sent":
+                logger.info("[%s] handoff →", current_executor or "?")
                 if current_step:
                     current_step.output += "\n\n*Handoff to next agent*"
                     await current_step.update()
 
             elif event.type == "executor_completed":
+                if accumulated_text and executor_id:
+                    logger.info("[%s] %s", executor_id, accumulated_text[:200])
+                    accumulated_text = ""
                 if current_step and executor_id == current_executor:
                     # Show tool calls made during this agent's execution
                     tracker = cl.user_session.get("tracker")
@@ -219,7 +233,11 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                             await tool_step.send()
                             await tool_step.update()
 
-                    await current_step.update()
+                    # Only show step if agent produced output
+                    if current_step.output:
+                        await current_step.update()
+                    else:
+                        await current_step.remove()
                     current_step = None
                     current_executor = None
 
@@ -230,8 +248,11 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
         # Reset workflow running flag so next message can proceed
         workflow._reset_running_flag()
         if current_step:
-            current_step.output += "\n\n*Stopped by user*"
-            await current_step.update()
+            if current_step.output:
+                current_step.output += "\n\n*Stopped by user*"
+                await current_step.update()
+            else:
+                await current_step.remove()
         if not msg.content:
             msg.content = "*Stopped.*" if isinstance(e, asyncio.CancelledError) else f"*Error: {e}*"
         await msg.update()
@@ -314,20 +335,6 @@ async def _run_workflow(workflow, *, user_input: str | None = None, responses: d
     else:
         if pending_requests:
             await cl.Message(content="Too many approval rounds. Please try again.").send()
-
-
-def _log_event(event, executor_id):
-    """Log workflow event for debugging."""
-    parts = [f"event={event.type}"]
-    if executor_id:
-        parts.append(f"agent={executor_id}")
-    if hasattr(event.data, "text") and event.data.text:
-        parts.append(f"text={event.data.text[:80]!r}")
-    elif hasattr(event.data, "type"):
-        parts.append(f"data.type={event.data.type}")
-    if hasattr(event, "state"):
-        parts.append(f"state={event.state}")
-    logger.debug(" | ".join(parts))
 
 
 @cl.on_stop
