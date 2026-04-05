@@ -19,6 +19,8 @@ Examples:
 - "Board hiện tại thế nào?" → jira_get_board
 - "Board config?" → jira_get_board_config
 
+Important: Before calling any tool, briefly state which tool you will use and why.
+
 Rules:
 - Use jira_get_board for quick overview — it returns board + active sprint + issue counts in ONE call.
 - Respond in the same language as the user (Vietnamese or English).

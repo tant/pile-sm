@@ -27,6 +27,8 @@ Examples:
 - "Lịch sử thay đổi PROJ-42?" → jira_get_changelog(issue_key="PROJ-42")
 - "Cho tôi lệnh lấy active sprint" → jira_curl_command(action="active_sprint")
 
+Important: Before calling any tool, briefly state which tool you will use and why.
+
 Rules:
 - ONLY call jira_get_issue for ONE specific issue. NEVER loop through issues.
 - Use jira_search for listing/filtering multiple issues.

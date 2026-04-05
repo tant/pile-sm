@@ -19,6 +19,8 @@ Examples:
 - "Issues trong epic PROJ-10?" → jira_get_epic_issues(epic_key="PROJ-10")
 - "Backlog có gì?" → jira_get_backlog(board_id=1)
 
+Important: Before calling any tool, briefly state which tool you will use and why.
+
 Rules:
 - Respond in the same language as the user (Vietnamese or English).
 """

@@ -19,7 +19,8 @@ from pile.agents.sprint import create_sprint_agent
 from pile.agents.triage import create_triage_agent
 from pile.client import create_client
 from pile.middleware import ToolCallTracker
-from pile.router import route_query
+from pile.cache import get_cached, set_cached
+from pile.router import smart_route
 
 logger = logging.getLogger("pile.workflow")
 
@@ -77,33 +78,46 @@ class RoutedWorkflow:
     async def _run_query(self, message: str, stream: bool = False):
         """Route and execute a user query."""
         from agent_framework._workflows._events import WorkflowEvent
+        from agent_framework._types import AgentResponseUpdate
 
         self._is_running = True
         try:
-            # Deterministic routing
-            agent_key = route_query(message)
-            if agent_key and agent_key in self.agents:
-                agent = self.agents[agent_key]
-                logger.info("Route: '%s' → %s (keyword match)", message[:50], agent.name)
-            else:
-                # Fallback to triage for ambiguous queries
-                agent = self.agents["triage"]
-                logger.info("Route: '%s' → %s (fallback)", message[:50], agent.name)
+            # Check cache first (read-only queries)
+            agent_key = smart_route(message)
+            cached = get_cached(message)
+            if cached and agent_key not in ("jira_write", "memory", "browser"):
+                cached_text, cached_agent = cached
+                logger.info("Cache hit: '%s' → %s", message[:50], cached_agent)
+                yield WorkflowEvent.executor_invoked(f"{cached_agent} (cached)")
+                yield WorkflowEvent.output(cached_agent, AgentResponseUpdate(text=cached_text))
+                yield WorkflowEvent.executor_completed(cached_agent)
+                return
+
+            # Route to agent
+            agent = self.agents.get(agent_key, self.agents["triage"])
+            logger.info("Route: '%s' → %s", message[:50], agent.name)
 
             # Emit executor_invoked
             yield WorkflowEvent.executor_invoked(agent.name)
 
             # Run the agent
+            full_text = ""
             if stream:
                 result_stream = agent.run(message, stream=True)
                 async for update in result_stream:
                     if update.text:
+                        full_text += update.text
                         yield WorkflowEvent.output(agent.name, update)
                 response = await result_stream.get_final_response()
             else:
                 response = await agent.run(message)
                 if response.text:
+                    full_text = response.text
                     yield WorkflowEvent.output(agent.name, response)
+
+            # Cache read-only responses
+            if full_text and agent_key not in ("jira_write", "memory", "browser"):
+                set_cached(message, full_text, agent.name)
 
             # Emit executor_completed
             yield WorkflowEvent.executor_completed(agent.name)

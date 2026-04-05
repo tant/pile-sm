@@ -29,6 +29,8 @@ Examples:
 - "Comment vào PROJ-42: đã fix" → jira_add_comment(issue_key="PROJ-42", comment="đã fix")
 - "PROJ-1 blocks PROJ-2" → jira_link_issues(inward_issue="PROJ-1", outward_issue="PROJ-2", link_type="Blocks")
 
+Important: Before calling any tool, briefly state which tool you will use and why.
+
 Rules:
 - All operations require user approval before execution.
 - Describe clearly what you plan to do before calling a tool.
