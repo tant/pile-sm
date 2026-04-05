@@ -11,7 +11,7 @@ def check_ollama() -> str | None:
     """Check if Ollama server is reachable and model available."""
     host = settings.ollama_host
     try:
-        resp = httpx.get(f"{host}/api/tags", timeout=5.0)
+        resp = httpx.get(f"{host}/api/tags", timeout=15.0)
         resp.raise_for_status()
         models = [m["name"] for m in resp.json().get("models", [])]
         model_id = settings.ollama_model_id
@@ -28,7 +28,7 @@ def check_openai() -> str | None:
     """Check if OpenAI-compatible endpoint is reachable."""
     base_url = settings.openai_base_url.rstrip("/")
     try:
-        resp = httpx.get(f"{base_url}/models", headers={"Authorization": f"Bearer {settings.openai_api_key}"}, timeout=5.0)
+        resp = httpx.get(f"{base_url}/models", headers={"Authorization": f"Bearer {settings.openai_api_key}"}, timeout=15.0)
         if resp.status_code == 401:
             return f"OpenAI endpoint auth failed at {base_url}. Check OPENAI_API_KEY."
         resp.raise_for_status()
@@ -74,7 +74,7 @@ def check_embedding_model() -> str | None:
             resp = httpx.get(
                 f"{base_url}/models",
                 headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                timeout=5.0,
+                timeout=15.0,
             )
             resp.raise_for_status()
             return None
@@ -86,7 +86,7 @@ def check_embedding_model() -> str | None:
     # Ollama provider: check /api/tags
     host = settings.ollama_host
     try:
-        resp = httpx.get(f"{host}/api/tags", timeout=5.0)
+        resp = httpx.get(f"{host}/api/tags", timeout=15.0)
         resp.raise_for_status()
         models = [m["name"] for m in resp.json().get("models", [])]
         model_id = settings.embedding_model_id
