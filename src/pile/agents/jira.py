@@ -59,6 +59,17 @@ Examples:
 - "Link PROJ-1 blocks PROJ-2" → jira_link_issues
 - "Assign PROJ-42 cho user ABC" → jira_update_issue
 
+Curl command mode:
+When user asks for "lệnh curl", "curl command", "cho tôi lệnh", "API command", or similar — do NOT call any tool.
+Instead, generate the equivalent curl command using:
+  - Base URL: {jira_url}
+  - Auth: -u "$JIRA_EMAIL:$JIRA_API_TOKEN"
+  - Headers: -H "Accept: application/json" -H "Content-Type: application/json"
+  - Agile API: /rest/agile/1.0/...
+  - Platform API: /rest/api/3/...
+Example: curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json" "{jira_url}/rest/agile/1.0/board"
+If user pastes API response JSON, analyze it and discuss — do NOT call tools for that data.
+
 Rules:
 - Always use tools to query data. Never guess or fabricate information.
 - Use jira_get_board FIRST for sprint overview — it returns board + active sprint + issue counts in one call.
