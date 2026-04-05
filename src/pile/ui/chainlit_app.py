@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import chainlit as cl
 
 from pile.workflows.interactive import create_workflow
+
+logger = logging.getLogger("pile.ui")
 
 # Agent display config
 AGENT_CONFIG = {
@@ -57,6 +60,16 @@ async def set_starters():
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize workflow with health checks."""
+    # Setup debug logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("pile").setLevel(logging.DEBUG)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
     # Health checks
     from pile.health import run_health_checks
     errors = run_health_checks()
@@ -156,6 +169,8 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     try:
         async for event in run_iter:
             executor_id = getattr(event, "executor_id", None)
+            # Debug: log every event
+            _log_event(event, executor_id)
 
             if event.type == "executor_invoked" and executor_id:
                 if current_step:
@@ -295,6 +310,20 @@ async def _run_workflow(workflow, *, user_input: str | None = None, responses: d
     else:
         if pending_requests:
             await cl.Message(content="Too many approval rounds. Please try again.").send()
+
+
+def _log_event(event, executor_id):
+    """Log workflow event for debugging."""
+    parts = [f"event={event.type}"]
+    if executor_id:
+        parts.append(f"agent={executor_id}")
+    if hasattr(event.data, "text") and event.data.text:
+        parts.append(f"text={event.data.text[:80]!r}")
+    elif hasattr(event.data, "type"):
+        parts.append(f"data.type={event.data.type}")
+    if hasattr(event, "state"):
+        parts.append(f"state={event.state}")
+    logger.debug(" | ".join(parts))
 
 
 @cl.on_stop

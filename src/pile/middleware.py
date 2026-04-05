@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
 from agent_framework import FunctionMiddleware, FunctionInvocationContext
+
+logger = logging.getLogger("pile.tools")
 
 
 @dataclass
@@ -34,11 +37,13 @@ class ToolCallTracker(FunctionMiddleware):
         self._calls: list[ToolCallRecord] = []
 
     async def process(self, context: FunctionInvocationContext, call_next):
+        args = dict(context.arguments) if hasattr(context.arguments, '__iter__') else {}
         record = ToolCallRecord(
             name=context.function.name,
-            arguments=dict(context.arguments) if hasattr(context.arguments, '__iter__') else {},
+            arguments=args,
             timestamp=time.time(),
         )
+        logger.info("CALL %s(%s)", context.function.name, args)
 
         start = time.monotonic()
         await call_next()
@@ -46,10 +51,11 @@ class ToolCallTracker(FunctionMiddleware):
 
         result = context.result
         if isinstance(result, str):
-            record.result = result[:200]  # Truncate for display
+            record.result = result[:200]
         elif result is not None:
             record.result = str(result)[:200]
 
+        logger.info("DONE %s → %dms | %s", context.function.name, record.duration_ms, record.result[:100] if record.result else "")
         self._calls.append(record)
 
     def drain(self) -> list[ToolCallRecord]:
