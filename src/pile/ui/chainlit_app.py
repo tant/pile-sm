@@ -14,7 +14,11 @@ logger = logging.getLogger("pile.ui")
 # Agent display config
 AGENT_CONFIG = {
     "TriageAgent": {"type": "run", "label": "Routing"},
-    "JiraAgent": {"type": "tool", "label": "Jira"},
+    "JiraQueryAgent": {"type": "tool", "label": "Jira Query"},
+    "JiraWriteAgent": {"type": "tool", "label": "Jira Write"},
+    "BoardAgent": {"type": "tool", "label": "Board"},
+    "SprintAgent": {"type": "tool", "label": "Sprint"},
+    "EpicAgent": {"type": "tool", "label": "Epic"},
     "GitAgent": {"type": "tool", "label": "Git"},
     "ScrumAgent": {"type": "llm", "label": "Scrum Master"},
 }
