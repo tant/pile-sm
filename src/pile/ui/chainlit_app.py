@@ -207,15 +207,17 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
             elif event.type == "request_info":
                 pending_requests.append(event)
 
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, Exception) as e:
         # Reset workflow running flag so next message can proceed
         workflow._reset_running_flag()
         if current_step:
             current_step.output += "\n\n*Stopped by user*"
             await current_step.update()
         if not msg.content:
-            msg.content = "*Stopped.*"
+            msg.content = "*Stopped.*" if isinstance(e, asyncio.CancelledError) else f"*Error: {e}*"
         await msg.update()
+        if not isinstance(e, asyncio.CancelledError):
+            raise
         return []
 
     if current_step:

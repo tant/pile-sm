@@ -154,6 +154,7 @@ async def _run():
                 elif event.type == "request_info":
                     pending_requests.append(event)
         except KeyboardInterrupt:
+            workflow._reset_running_flag()
             print("\n[Stopped]")
             continue
 
