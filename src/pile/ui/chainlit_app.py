@@ -32,19 +32,24 @@ async def set_starters():
             icon="/public/icons/standup.svg",
         ),
         cl.Starter(
+            label="Workload",
+            message="Ai đang bị quá tải? Phân tích workload team",
+            icon="/public/icons/workload.svg",
+        ),
+        cl.Starter(
             label="Blockers",
             message="Có gì đang bị block không?",
             icon="/public/icons/block.svg",
         ),
         cl.Starter(
+            label="Backlog",
+            message="Backlog có gì? Gợi ý ưu tiên",
+            icon="/public/icons/backlog.svg",
+        ),
+        cl.Starter(
             label="Data Quality",
             message="Kiểm tra Jira có gì thiếu thông tin không?",
             icon="/public/icons/quality.svg",
-        ),
-        cl.Starter(
-            label="Knowledge Base",
-            message="Có những tài liệu nào trong knowledge base?",
-            icon="/public/icons/knowledge.svg",
         ),
     ]
 
