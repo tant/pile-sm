@@ -252,6 +252,8 @@ async def main():
     parser.add_argument("--end", type=int, default=100, help="End question ID")
     parser.add_argument("--timeout", type=float, default=120, help="Timeout per question (seconds)")
     parser.add_argument("--no-cache", action="store_true", help="Clear cache before each question")
+    parser.add_argument("--sample", type=int, default=0, help="Random sample N questions (0=all in range)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
     args = parser.parse_args()
 
     # Setup logging — write to both console and file
@@ -276,7 +278,13 @@ async def main():
 
     print(f"Loading questions {args.start}-{args.end}...")
     questions = load_questions(args.start, args.end)
-    print(f"Loaded {len(questions)} questions")
+    if args.sample and args.sample < len(questions):
+        import random
+        random.seed(args.seed)
+        questions = random.sample(questions, args.sample)
+        print(f"Sampled {len(questions)} questions (seed={args.seed})")
+    else:
+        print(f"Loaded {len(questions)} questions")
 
     print("Initializing workflow...")
     from pile.workflows.interactive import create_workflow
