@@ -1,8 +1,9 @@
-"""E2E test runner for Pile — runs 100 questions sequentially through the workflow.
+"""E2E test runner for Pile — runs questions sequentially through the workflow.
 
 Usage:
     cd /Users/tantran/works/gg
     uv run python tests/e2e/runner.py [--start N] [--end N] [--timeout 120] [--no-cache]
+    uv run python tests/e2e/runner.py --sample 20 --seed 42
 
 Outputs:
     tests/e2e/results/run_<timestamp>.jsonl   — one JSON line per question
@@ -23,8 +24,6 @@ from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-
-from pile.router import route_query  # noqa: E402
 
 RESULTS_DIR = Path(__file__).parent / "results"
 QUESTIONS_FILE = Path(__file__).parent / "questions.json"
@@ -64,19 +63,13 @@ async def run_single_query(
     query = question["q"]
     expected = question["route"]
 
-    # Determine route (for comparison) — keyword only, avoid duplicate LLM call
-    actual_route = route_query(query) or "llm"
-
-    # Check if cached
     cached_hit = get_cached(query) is not None
-
-    # Drain any leftover tool calls
-    tracker.drain()
 
     # Run the workflow with timeout
     full_text = ""
     status = "ok"
     error_msg = ""
+    actual_route = ""
     start_time = time.monotonic()
 
     try:
@@ -85,10 +78,14 @@ async def run_single_query(
                 if event.type == "output":
                     if hasattr(event.data, "text") and event.data.text:
                         full_text += event.data.text
+                elif event.type == "executor_invoked":
+                    # Capture the first agent name as actual route
+                    if not actual_route:
+                        name = event.data if isinstance(event.data, str) else str(event.data)
+                        actual_route = name.replace("Agent", "").lower().strip()
     except TimeoutError:
         status = "timeout"
         error_msg = f"Timed out after {timeout}s"
-        # Reset workflow running flag so next query can proceed
         if hasattr(workflow, "_reset_running_flag"):
             workflow._reset_running_flag()
     except Exception as e:
@@ -102,14 +99,18 @@ async def run_single_query(
     if status == "ok" and not full_text.strip():
         status = "empty"
 
-    # Collect tool calls from tracker
+    # Map agent names back to route keys for comparison
+    _NAME_TO_KEY = {
+        "triage": "triage", "jiraquery": "jira_query", "jirawrite": "jira_write",
+        "board": "board", "sprint": "sprint", "epic": "epic",
+        "scrum": "scrum", "git": "git",
+    }
+    route_key = _NAME_TO_KEY.get(actual_route, actual_route)
+
+    # Collect tool calls — get from tracker (what hasn't been drained by workflow)
     calls = tracker.drain()
     tool_call_records = [
-        {
-            "name": c.name,
-            "args": c.arguments,
-            "duration_ms": c.duration_ms,
-        }
+        {"name": c.name, "args": c.arguments, "duration_ms": c.duration_ms}
         for c in calls
     ]
 
@@ -117,13 +118,13 @@ async def run_single_query(
         id=qid,
         question=query,
         expected_route=expected,
-        actual_route=actual_route,
+        actual_route=route_key,
         category=question["cat"],
         lang=question["lang"],
         status=status,
-        response_text=full_text[:2000],  # truncate for storage
+        response_text=full_text[:2000],
         response_length=len(full_text),
-        route_correct=(actual_route == expected),
+        route_correct=(route_key == expected),
         duration_s=elapsed,
         tool_calls=tool_call_records,
         error=error_msg,
@@ -159,12 +160,10 @@ def write_summary(results: list[TestResult], filepath: Path, elapsed_total: floa
     max_dur = max(durations) if durations else 0
     min_dur = min(durations) if durations else 0
 
-    # Per-route breakdown
     routes: dict[str, list[TestResult]] = {}
     for r in results:
         routes.setdefault(r.actual_route, []).append(r)
 
-    # Per-category breakdown
     cats: dict[str, list[TestResult]] = {}
     for r in results:
         cats.setdefault(r.category, []).append(r)
@@ -209,7 +208,6 @@ def write_summary(results: list[TestResult], filepath: Path, elapsed_total: floa
             f"avg={avg:.1f}s"
         )
 
-    # Failures detail
     failures = [r for r in results if r.status != "ok"]
     if failures:
         lines += ["", "--- Failures ---"]
@@ -220,7 +218,6 @@ def write_summary(results: list[TestResult], filepath: Path, elapsed_total: floa
             )
             lines.append(f"        Q: {r.question}")
 
-    # Slow queries (>30s)
     slow = [r for r in results if r.status == "ok" and r.duration_s > 30]
     if slow:
         lines += ["", "--- Slow Queries (>30s) ---"]
@@ -230,7 +227,6 @@ def write_summary(results: list[TestResult], filepath: Path, elapsed_total: floa
                 f"Q: {r.question[:60]}"
             )
 
-    # Route mismatches
     misroutes = [r for r in results if not r.route_correct]
     if misroutes:
         lines += ["", "--- Route Mismatches ---"]
@@ -256,7 +252,6 @@ async def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
     args = parser.parse_args()
 
-    # Setup logging — write to both console and file
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = RESULTS_DIR / f"run_{ts}.log"
@@ -272,7 +267,6 @@ async def main():
             logging.FileHandler(log_file),
         ],
     )
-    # Suppress noisy loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
