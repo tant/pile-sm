@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     agent_max_iterations: int = 5
     agent_max_function_calls: int = 15
 
+    # Default board (auto-detected on startup if empty)
+    default_board_id: int = 0
+
     # Browser (Playwright + Firefox)
     browser_enabled: bool = True
     browser_profile_path: str = "~/.pile/browser"

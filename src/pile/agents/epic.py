@@ -6,6 +6,7 @@ from pile.tools.jira_tools import jira_get_backlog, jira_get_epic_issues, jira_g
 
 EPIC_INSTRUCTIONS = """\
 You are an epic and backlog specialist for project {project_key}.
+Default board ID: {board_id}. Use this when user doesn't specify a board.
 
 You help users view epics and backlog items.
 
@@ -26,14 +27,17 @@ Rules:
 """
 
 
-def create_epic_agent(client, middleware=None):
+def create_epic_agent(client, middleware=None, board_id=0):
     """Create the Epic Agent."""
     from pile.config import settings
 
     return client.as_agent(
         name="EpicAgent",
         description="Epic and backlog specialist: list epics, epic issues, backlog",
-        instructions=EPIC_INSTRUCTIONS.format(project_key=settings.jira_project_key),
+        instructions=EPIC_INSTRUCTIONS.format(
+            project_key=settings.jira_project_key,
+            board_id=board_id or "unknown (ask user)",
+        ),
         tools=[jira_get_epics, jira_get_epic_issues, jira_get_backlog],
         middleware=middleware,
     )

@@ -25,6 +25,34 @@ from pile.router import smart_route
 logger = logging.getLogger("pile.workflow")
 
 
+def _detect_board_id():
+    """Auto-detect default board ID from Jira on startup."""
+    from pile.config import settings
+    if settings.default_board_id:
+        return settings.default_board_id
+    if not settings.jira_project_key:
+        return 0
+    try:
+        import httpx
+        resp = httpx.get(
+            f"{settings.jira_base_url}/rest/agile/1.0/board",
+            params={"projectKeyOrId": settings.jira_project_key, "maxResults": 1},
+            auth=(settings.jira_email, settings.jira_api_token),
+            headers={"Accept": "application/json"},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        boards = resp.json().get("values", [])
+        if boards:
+            board_id = boards[0]["id"]
+            settings.default_board_id = board_id
+            logger.info("Auto-detected board ID: %d (%s)", board_id, boards[0]["name"])
+            return board_id
+    except Exception as e:
+        logger.warning("Failed to auto-detect board ID: %s", e)
+    return 0
+
+
 def create_workflow():
     """Build the routed workflow with all available agents.
 
@@ -32,14 +60,15 @@ def create_workflow():
     """
     client = create_client()
     tracker = ToolCallTracker()
+    board_id = _detect_board_id()
 
     agents = {
         "triage": create_triage_agent(client, middleware=[tracker]),
         "jira_query": create_jira_query_agent(client, middleware=[tracker]),
         "jira_write": create_jira_write_agent(client, middleware=[tracker]),
         "board": create_board_agent(client, middleware=[tracker]),
-        "sprint": create_sprint_agent(client, middleware=[tracker]),
-        "epic": create_epic_agent(client, middleware=[tracker]),
+        "sprint": create_sprint_agent(client, middleware=[tracker], board_id=board_id),
+        "epic": create_epic_agent(client, middleware=[tracker], board_id=board_id),
         "scrum": create_scrum_agent(client, middleware=[tracker]),
     }
 
