@@ -1,8 +1,8 @@
 # Architecture Design: Pile
 
-> **Version**: 0.5
+> **Version**: 0.6
 > **Date**: 2026-04-06
-> **Status**: In Development (V2 — Multi-model routing + Recovery)
+> **Status**: In Development (V2 — Prefetch + Multi-model routing + Recovery)
 
 ---
 
@@ -23,13 +23,23 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ROUTING LAYER                                 │
 │                                                                 │
-│  Phase 1: Keyword regex (<1ms, ~70% queries)                    │
+│  Phase 1: Keyword regex (<1ms, ~75% queries)                    │
 │  Phase 2: LLM classify — Gemma 2B (~500ms, semantic)           │
 │  Phase 3: Embedding fallback (if no router model)               │
 │                                                                 │
 │  Cache: exact-match (5min TTL, read-only queries)               │
 └──────────────────────────┬──────────────────────────────────────┘
                            │ agent key
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   PREFETCH LAYER (scrum only)                    │
+│                                                                 │
+│  Detect query type (standup/velocity/blockers/...)              │
+│  → Fetch Jira data deterministically (API calls, no LLM)        │
+│  → Inject data into agent prompt                                │
+│  Other agents: skip prefetch, use tools directly                │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    AGENT LAYER                                   │
@@ -42,10 +52,11 @@
 │  └────────────┘ └────────────┘ └────────────┘ └────────────┘  │
 │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐  │
 │  │   Epic     │ │    Git     │ │   Scrum    │ │  Triage    │  │
-│  │ 3 tools    │ │ 5 tools    │ │ 5-9 tools  │ │ mem+browser│  │
-│  │ read-only  │ │ read-only  │ │ read-only  │ │ fallback   │  │
+│  │ 3 tools    │ │ 5 tools    │ │ prefetch   │ │ mem+browser│  │
+│  │ read-only  │ │ read-only  │ │ or tools   │ │ fallback   │  │
 │  └────────────┘ └────────────┘ └────────────┘ └────────────┘  │
 │                                                                 │
+│  Loop detection: block same tool called 3+ times                │
 │  Recovery: agent fail → fallback chain → retry 1x               │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
@@ -164,11 +175,15 @@ Epics + backlog: `jira_get_epics`, `jira_get_epic_issues`, `jira_get_backlog`.
 
 Git repos: `git_log`, `git_diff`, `git_branch_list`, `git_show`, `git_blame`. Chỉ tạo khi `GIT_REPOS` configured. Input validation chống injection.
 
-### 3.7 Scrum Agent (5-9 tools)
+### 3.7 Scrum Agent (2 modes)
 
-Scrum Master với direct access Jira + optional Git/Memory/Browser tools:
-- **Base**: `jira_search`, `jira_get_issue`, `jira_get_board`, `jira_get_sprint_issues`, `jira_get_changelog`
-- **Optional**: `git_log`, `git_diff`, `memory_search`, `browser_open`, `browser_read`
+Scrum Master — operates in 2 modes depending on data availability:
+
+**Prefetch mode** (primary): Workflow fetches Jira data deterministically before agent runs. Agent receives data in system prompt, no Jira tools — only `git_log`, `git_diff`, `memory_search` for deep-dive.
+
+**Fallback mode**: If prefetch not possible (no board_id), agent gets full Jira tools: `jira_search`, `jira_get_issue`, `jira_get_board`, `jira_get_sprint_issues`, `jira_get_changelog` + optional git/memory.
+
+Tại sao 2 modes: model 4B phân tích tốt khi có data sẵn, nhưng loop tool calls khi phải tự tìm data. Prefetch loại bỏ đúng phần model yếu.
 
 Xử lý: standup, sprint review, velocity, workload, blockers, cycle time, data quality, stakeholder summary, meeting prep.
 
@@ -176,36 +191,46 @@ Xử lý: standup, sprint review, velocity, workload, blockers, cycle time, data
 
 Xử lý memory operations (remember, forget, search, ingest documents) và browser tasks (open URLs, scrape, login). Không có Jira/Git tools — nếu nhận query Jira, nó thú nhận không có tool phù hợp → trigger recovery.
 
-### Tool Overlap
+### Tool Overlap (fallback mode)
 
 | Tool | Agents có access |
 |---|---|
-| `jira_search`, `jira_get_issue` | JiraQuery, Scrum |
-| `jira_get_changelog` | JiraQuery, Scrum |
-| `jira_get_board` | Board, Scrum |
-| `jira_get_sprint_issues` | Sprint, Scrum |
-| `git_log`, `git_diff` | Git, Scrum (optional) |
-| `memory_search` | Triage, Scrum (optional) |
-| `browser_open`, `browser_read` | Triage, Scrum (optional) |
+| `jira_search`, `jira_get_issue` | JiraQuery, Scrum (fallback) |
+| `jira_get_changelog` | JiraQuery, Scrum (fallback) |
+| `jira_get_board` | Board, Scrum (fallback) |
+| `jira_get_sprint_issues` | Sprint, Scrum (fallback) |
+| `git_log`, `git_diff` | Git, Scrum (both modes) |
+| `memory_search` | Triage, Scrum (both modes) |
+| `browser_open`, `browser_read` | Triage |
 
-Overlap có chủ đích — Scrum Agent cần data từ nhiều nguồn để phân tích.
+Trong prefetch mode, Scrum Agent không có Jira tool overlap — data đã inject sẵn.
 
 ---
 
-## 4. Recovery Mechanism
+## 4. Safety Mechanisms
+
+### 4.1 Loop Detection (middleware)
+
+Middleware `ToolCallTracker` block cùng tool gọi lần thứ 3+:
+
+```
+jira_search({jql: "..."}) → OK
+jira_search({jql: "..."}) → OK (different args)
+jira_search({...})        → BLOCKED: "analyze the data you have"
+```
+
+Model 4B hay lặp tool calls với JQL hơi khác nhau. Loop detection cắt sớm, buộc model phân tích data đã có.
+
+### 4.2 Recovery Mechanism
 
 Khi agent cho kết quả kém, workflow tự re-route sang agent khác.
 
-### Failure Detection (deterministic, không cần LLM)
+**Failure Detection** (deterministic, không cần LLM):
+- Response quá ngắn (<20 chars)
+- Agent có tools nhưng không gọi tool nào (trừ triage và scrum prefetch)
+- Tất cả tool calls đều trả error
 
-```python
-def _detect_failure(full_text, tool_calls, agent_key) -> bool:
-    # Response quá ngắn (<20 chars)
-    # Agent có tools nhưng không gọi tool nào (trừ triage)
-    # Tất cả tool calls đều trả error
-```
-
-### Fallback Chains
+**Fallback Chains**:
 
 ```python
 _FALLBACK_CHAINS = {
@@ -219,7 +244,7 @@ _FALLBACK_CHAINS = {
 }
 ```
 
-### Flow
+**Flow**:
 
 ```
 Agent A chạy → _detect_failure() → True?
@@ -229,8 +254,32 @@ Agent A chạy → _detect_failure() → True?
 
 - Max 1 retry (tổng cộng 2 agent runs)
 - Không retry `jira_write` (write ops quá rủi ro)
-- Drain tracker giữa 2 attempts
+- Scrum prefetch mode: `tools=0` là expected, không trigger recovery
 - Chỉ cache response nếu quality OK
+
+### 4.3 Data Prefetch (Scrum)
+
+Thay vì để model 4B tự quyết gọi tool nào (gây loop), workflow fetch data trước:
+
+```
+"velocity?" → detect_scrum_type() → "velocity"
+           → prefetch: jira_get_board() + jira_get_sprint_issues() + closed sprints
+           → inject 5-6K data vào prompt
+           → Scrum Agent phân tích ngay (không cần gọi tool)
+```
+
+Query type mapping (`prefetch.py`):
+
+| Query type | Data fetched |
+|-----------|-------------|
+| standup | sprint issues + issues updated last 24h |
+| velocity | board info + sprint issues + closed sprints |
+| sprint_review, stakeholder | board info + sprint issues |
+| workload | sprint issues |
+| blockers | sprint issues + blocked issues search |
+| retro | board info + sprint issues + recently done issues |
+| data_quality | sprint issues |
+| general | board info + sprint issues |
 
 ---
 
@@ -239,7 +288,7 @@ Agent A chạy → _detect_failure() → True?
 ### 5.1 Interactive (Primary — Q&A)
 
 ```
-User → smart_route() → Agent → [Recovery if fail] → Response
+User → smart_route() → [Prefetch if scrum] → Agent → [Recovery if fail] → Response
 ```
 
 Mỗi agent có riêng `AgentSession` để giữ conversation history.
@@ -334,7 +383,8 @@ src/pile/
 ├── client.py              # LLM client factory
 ├── health.py              # Startup health checks (provider-aware)
 ├── router.py              # 3-phase router (keyword → LLM → embedding)
-├── middleware.py           # ToolCallTracker (timing, logging)
+├── prefetch.py            # Data prefetch for Scrum Agent
+├── middleware.py           # ToolCallTracker (timing, logging, loop detection)
 ├── cache.py               # Semantic cache (exact-match, 5min TTL)
 ├── agents/
 │   ├── triage.py          # Memory + browser handler
@@ -344,7 +394,7 @@ src/pile/
 │   ├── sprint.py          # Sprint management
 │   ├── epic.py            # Epics + backlog
 │   ├── git.py             # Git specialist (optional)
-│   └── scrum.py           # Scrum Master (direct Jira + Git access)
+│   └── scrum.py           # Scrum Master (prefetch mode + fallback mode)
 ├── tools/
 │   ├── jira_tools.py      # 19 Jira REST API tools
 │   ├── git_tools.py       # 5 Git CLI tools + validation
@@ -373,14 +423,17 @@ src/pile/
 | Deterministic router thay HandoffBuilder | HandoffBuilder thêm 7 transfer tools → overwhelm model 9B/4B |
 | LLM classifier (Gemma 2B) thay embedding similarity | Embedding scores quá sát nhau (~0.44-0.47), LLM hiểu ngữ nghĩa tốt hơn (89% vs 60%) |
 | Router model riêng, không dùng agent model | Gemma 2B nhanh (~500ms), không cần tool calling. Qwen 4B chuyên tool calling |
-| Recovery fallback chains | One-shot routing không perfect → cần cơ chế tự sửa khi sai |
+| Keyword patterns thu hẹp, đẩy ambiguous sang LLM | Keyword bắt sai 7% → thu hẹp pattern rộng, LLM xử lý ambiguous tốt hơn |
+| Prefetch data cho Scrum Agent | Model 4B loop tool calls khi tự tìm data, nhưng phân tích tốt khi có data sẵn |
+| Scrum 2 modes (prefetch + fallback) | Prefetch cho 90% queries; fallback giữ full tools cho edge cases |
+| Loop detection (block tool 3+ lần) | Model 4B hay lặp cùng tool với args hơi khác — cắt sớm buộc phân tích |
+| Recovery fallback chains | One-shot routing không perfect → cơ chế tự sửa khi sai |
+| `_scrum_prefetch` key riêng | Không ghi đè fallback scrum agent — cả 2 modes tồn tại cùng lúc |
 | Max 1 retry | Trade-off speed vs resilience — 2 agent runs là chấp nhận được |
 | Triage không có Jira tools | Giữ mỗi agent focused. Recovery sẽ chuyển sang đúng agent |
-| Scrum Agent có direct Jira/Git access | Giảm handoff cho reports cần data từ nhiều nguồn |
 | Singleton httpx client cho Jira | Reuse TCP/TLS connections |
 | Cùng 1 provider cho tất cả models | Đơn giản ops — 1 endpoint (LM Studio hoặc Ollama) |
 | Embedding giữ cho Memory/RAG, bỏ khỏi routing | Embedding tốt cho semantic search docs, kém cho classify intent |
-| Greeting patterns trong keyword router | Tránh lãng phí LLM call cho "hello", "xin chào" |
 | `@_safe_jira_call` decorator | DRY error handling cho tất cả Jira tools |
 | Git tools validate input qua regex | Chống command injection |
 | Tool-based retrieval thay ContextProvider | ContextProvider inject mọi call → lãng phí token |
