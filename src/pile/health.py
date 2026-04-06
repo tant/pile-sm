@@ -163,6 +163,31 @@ def run_health_checks() -> list[str]:
     if err:
         errors.append(err)
 
+    # Router model — verify it's loaded if configured
+    if settings.router_model:
+        if settings.llm_provider == "openai":
+            loaded = _list_openai_models()
+            if loaded and settings.router_model not in loaded:
+                errors.append(
+                    f"Router model '{settings.router_model}' not loaded. "
+                    f"Available: {', '.join(loaded)}"
+                )
+        elif settings.llm_provider in ("ollama", "ollama-native"):
+            err = check_ollama()
+            if err is None:
+                # Ollama reachable, check model exists
+                try:
+                    resp = httpx.get(f"{settings.ollama_host}/api/tags", timeout=15.0)
+                    models = [m["name"] for m in resp.json().get("models", [])]
+                    mid = settings.router_model
+                    if mid not in models and f"{mid}:latest" not in models:
+                        errors.append(
+                            f"Router model '{mid}' not found on Ollama. "
+                            f"Run: ollama pull {mid}"
+                        )
+                except Exception:
+                    pass
+
     # Embedding — check the configured provider
     if settings.memory_enabled:
         err = check_embedding_model()

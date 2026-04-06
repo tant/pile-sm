@@ -1,7 +1,8 @@
-"""Smart router — keyword-based + embedding fallback for agent selection.
+"""Smart router — keyword-based + LLM classifier fallback for agent selection.
 
 Phase 1: Keyword matching handles 70%+ queries instantly (<1ms).
-Phase 2: Embedding similarity for ambiguous queries (no LLM call needed).
+Phase 2: LLM classifier (lightweight model) for ambiguous queries (~150ms).
+Phase 3: Embedding similarity as last resort if no router model configured.
 """
 
 from __future__ import annotations
@@ -86,7 +87,17 @@ _ROUTES: list[tuple[str, list[str]]] = [
         r"issue\b", r"ticket\b",
         r"tr[aạ]ng\s+th[aá]i", r"status\b",
     ]),
+    # Greetings → triage (catch before LLM classifier)
+    ("triage", [
+        r"^(xin\s+)?ch[aà]o\b", r"^hello\b", r"^hi\b", r"^hey\b",
+        r"^good\s+(morning|afternoon|evening)",
+    ]),
 ]
+
+_VALID_AGENTS = {
+    "jira_query", "jira_write", "board", "sprint", "epic",
+    "git", "scrum", "memory", "browser", "triage",
+}
 
 
 def route_query(query: str) -> str | None:
@@ -100,7 +111,84 @@ def route_query(query: str) -> str | None:
     return None
 
 
-# --- Phase 2: Embedding-based fallback ---
+# --- Phase 2: LLM classifier (lightweight router model) ---
+
+_CLASSIFY_PROMPT = """\
+Pick one agent for this query. Reply ONLY the agent name.
+
+jira_query = search/view/list issues, who is assigned what, issue details, filter by status/type
+jira_write = create/update issues, assign, transition status, comment
+board = boards list/details/config
+sprint = sprint info/issues, create/move sprint
+epic = epics, backlog
+git = commits, branches, diffs
+scrum = standup, workload, velocity, review, retro, blockers, reports, team overview
+memory = remember/forget, knowledge base
+browser = open URL, scrape, screenshot
+
+"Ai đang làm gì" / "X handle gì" → jira_query
+"Team thế nào" / "có vấn đề gì" → scrum
+
+{query}
+Agent:"""
+
+
+def route_query_with_llm(query: str) -> str:
+    """Route using a lightweight LLM call. Returns agent key."""
+    try:
+        import httpx
+        from pile.config import settings
+
+        prompt = _CLASSIFY_PROMPT.format(query=query)
+
+        if settings.llm_provider == "openai":
+            resp = httpx.post(
+                f"{settings.openai_base_url}/chat/completions",
+                json={
+                    "model": settings.router_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 20,
+                    "temperature": 0,
+                },
+                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+                timeout=10.0,
+            )
+        else:
+            # Ollama
+            resp = httpx.post(
+                f"{settings.ollama_host}/api/chat",
+                json={
+                    "model": settings.router_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "options": {"num_predict": 20, "temperature": 0},
+                },
+                timeout=10.0,
+            )
+
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Extract the agent name from response
+        if settings.llm_provider == "openai":
+            raw = data["choices"][0]["message"]["content"]
+        else:
+            raw = data["message"]["content"]
+
+        agent_key = raw.strip().lower().split()[0].strip(".,;:!\"'")
+        if agent_key in _VALID_AGENTS:
+            logger.info("LLM classify: '%s' → %s", query[:40], agent_key)
+            return agent_key
+
+        logger.warning("LLM classify returned invalid agent '%s', falling back to triage", raw.strip()[:30])
+        return "triage"
+
+    except Exception as e:
+        logger.warning("LLM classify failed: %s", e)
+        return "triage"
+
+
+# --- Phase 3: Embedding similarity (last resort) ---
 
 # Agent descriptions for semantic matching
 _AGENT_DESCRIPTIONS: dict[str, str] = {
@@ -199,8 +287,11 @@ def route_query_with_embedding(query: str) -> str:
         return "triage"
 
 
+# --- Smart route: keyword → LLM classify → embedding → triage ---
+
+
 def smart_route(query: str) -> str:
-    """Smart routing: keyword first, embedding fallback.
+    """Smart routing: keyword first, then LLM classifier, then embedding.
 
     Returns agent key (never None).
     """
@@ -209,5 +300,10 @@ def smart_route(query: str) -> str:
     if result:
         return result
 
-    # Phase 2: embedding similarity (~100ms)
+    # Phase 2: LLM classifier (if router model configured)
+    from pile.config import settings
+    if settings.router_model:
+        return route_query_with_llm(query)
+
+    # Phase 3: embedding similarity (last resort)
     return route_query_with_embedding(query)

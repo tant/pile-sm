@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     memory_store_path: str = "~/.pile/chromadb"
     embedding_model_id: str = "nomic-embed-text"
 
+    # Router model (lightweight model for query classification, no tool calling needed)
+    # Uses the same provider endpoint — just a different model ID.
+    # Leave empty to use embedding similarity fallback instead.
+    router_model: str = ""
+
     # Agent limits (prevent tool call loops, tune per model capability)
     agent_max_iterations: int = 5
     agent_max_function_calls: int = 15
