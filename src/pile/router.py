@@ -15,6 +15,11 @@ logger = logging.getLogger("pile.router")
 # --- Phase 1: Keyword patterns → agent key (checked in order, first match wins) ---
 
 _ROUTES: list[tuple[str, list[str]]] = [
+    # Greetings → triage (cheapest, catch first)
+    ("triage", [
+        r"^(xin\s+)?ch[aà]o\b", r"^hello\b", r"^hi\b", r"^hey\b",
+        r"^good\s+(morning|afternoon|evening)",
+    ]),
     # High priority: memory and browser (before Jira patterns that might overlap)
     ("memory", [
         r"nh[oớ]\s+gi[uú]p", r"remember\b", r"qu[eê]n\b", r"forget\b",
@@ -29,20 +34,17 @@ _ROUTES: list[tuple[str, list[str]]] = [
         r"vnexpress|github\.com|gitlab\.com|atlassian",
         r"https?://",
     ]),
-    # Issue key (TETRA-123, PROJ-42, etc.) — almost always a Jira query
-    ("jira_query", [
-        r"[A-Z]+-\d+",
-    ]),
-    # Curl/command generation
+    # Curl/command generation (unambiguous)
     ("jira_query", [
         r"cho\s+t[oô]i\s+l[eệ]nh", r"curl\b", r"l[eệ]nh\s+l[aấ]y",
         r"changelog\b", r"l[iị]ch\s+s[uử]",
     ]),
-    # Jira write (create/update/transition)
+    # Jira write — only when user explicitly wants to MODIFY something
     ("jira_write", [
         r"t[aạ]o\s+(issue|bug|task|story|epic|ticket)",
         r"create\s+(issue|bug|task|story|epic|ticket)",
-        r"assign\b", r"chuy[eể]n\s+tr[aạ]ng\s+th[aá]i",
+        r"assign\s+(cho\b|to\b|v[aà]o\b)",     # "assign cho X" = write
+        r"chuy[eể]n\s+tr[aạ]ng\s+th[aá]i",
         r"transition\b", r"comment\b", r"link\s+issue",
         r"s[uử]a\s+(issue|bug|task)", r"update\s+issue",
         r"c[aậ]p\s+nh[aậ]t\s+(issue|bug|task)",
@@ -52,25 +54,28 @@ _ROUTES: list[tuple[str, list[str]]] = [
         r"\bboard\b", r"li[eệ]t\s+k[eê]\s+.*board",
         r"board\s+config", r"c[aấ]u\s+h[iì]nh\s+board",
     ]),
-    # Scrum (analysis/reports — BEFORE sprint to catch "tóm tắt sprint", "báo cáo sprint")
+    # Scrum (analysis/reports) — only UNAMBIGUOUS scrum patterns
+    # Removed: progress\b, tiến độ, \bsprint\b overlap → let LLM handle ambiguous
     ("scrum", [
         r"standup\b", r"velocity\b", r"workload\b",
         r"burndown\b", r"cycle\s+time", r"retro",
         r"sprint\s+review", r"sprint\s+planning",
-        r"\bblock\b", r"blocke[rd]", r"b[iị]\s+block",
+        r"blocke[rd]", r"b[iị]\s+block",
         r"qu[aá]\s+t[aả]i", r"overload",
         r"data\s+quality", r"thi[eế]u\s+th[oô]ng\s+tin",
         r"t[oổ]ng\s+h[oợ]p", r"b[aá]o\s+c[aá]o",
         r"t[oó]m\s+t[aắ]t", r"summary\b",
         r"stakeholder", r"meeting\s+prep",
-        r"cho\s+s[eế]p", r"ph[aâ]n\s+t[ií]ch",
-        r"ti[eế]n\s+đ[oộ]", r"progress\b",
+        r"cho\s+s[eế]p",
     ]),
-    # Sprint (management — create, move, view sprint data)
+    # Sprint (management — only explicit sprint operations)
     ("sprint", [
-        r"\bsprint\b", r"t[aạ]o\s+sprint",
+        r"sprint\s+hi[eệ]n\s+t[aạ]i", r"sprint\s+n[aà]o",
+        r"sprint\s+(có|co)\b", r"trong\s+sprint",
+        r"t[aạ]o\s+sprint", r"create\s+sprint",
         r"chuy[eể]n.*v[aà]o\s+sprint", r"move.*sprint",
         r"v[eề]\s+backlog", r"move.*backlog",
+        r"list.*sprints?\b", r"danh\s+s[aá]ch\s+sprint",
     ]),
     # Epic / Backlog
     ("epic", [
@@ -81,16 +86,16 @@ _ROUTES: list[tuple[str, list[str]]] = [
         r"\bgit\b", r"\bcommit\b", r"\bbranch\b",
         r"\bdiff\b", r"\bblame\b", r"code\s+change",
     ]),
-    # Jira query (broadest, lowest priority)
+    # Issue key (TETRA-123) — but NOT if "epic" also present (Q65 case)
+    # Checked late so "epic TETRA-893" matches epic first
+    ("jira_query", [
+        r"[A-Z]+-\d+",
+    ]),
+    # Jira query (broadest, lowest priority) — narrowed: removed "issue\b" standalone
     ("jira_query", [
         r"t[iì]m\b", r"search\b", r"jql\b",
-        r"issue\b", r"ticket\b",
+        r"\bticket\b", r"\bbug\b",
         r"tr[aạ]ng\s+th[aá]i", r"status\b",
-    ]),
-    # Greetings → triage (catch before LLM classifier)
-    ("triage", [
-        r"^(xin\s+)?ch[aà]o\b", r"^hello\b", r"^hi\b", r"^hey\b",
-        r"^good\s+(morning|afternoon|evening)",
     ]),
 ]
 
