@@ -23,8 +23,9 @@ def recall(query: str, n_results: int = 3) -> str:
         if not results:
             return ""
 
-        # Filter by relevance — ChromaDB distance < 1.0 means somewhat relevant
-        relevant = [r for r in results if r.get("distance", 2.0) < 1.0]
+        # Filter by relevance — ChromaDB cosine distance [0, 2].
+        # < 0.8 means similarity > 0.6, fairly relevant.
+        relevant = [r for r in results if r.get("distance", 2.0) < 0.8]
         if not relevant:
             return ""
 
@@ -47,10 +48,17 @@ def recall(query: str, n_results: int = 3) -> str:
 
 
 def learn(query: str, lesson: str) -> None:
-    """Compress a lesson and save to memory. Uses router model for compression."""
+    """Compress a lesson and save to memory. Skips if similar lesson already exists."""
     try:
         from pile.config import settings
         if not settings.memory_enabled:
+            return
+
+        # Check for duplicate — if a similar memory already exists, skip
+        from pile.memory.store import search_memories
+        existing = search_memories(lesson, n_results=1)
+        if existing and existing[0].get("distance", 2.0) < 0.3:
+            logger.debug("Learn: similar memory already exists, skipping")
             return
 
         compressed = _compress(lesson)

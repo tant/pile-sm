@@ -239,11 +239,12 @@ class RoutedWorkflow:
                     agent_key = "_scrum_prefetch"
                     self._sessions.pop("_scrum_prefetch", None)
 
-            # --- Auto-recall: inject memory context into message ---
+            # --- Auto-recall: inject memory context (skip for triage/memory) ---
             enriched_message = message
-            memory_context = recall(message)
-            if memory_context:
-                enriched_message = f"{message}\n\n{memory_context}"
+            if agent_key not in ("triage", "memory"):
+                memory_context = recall(message)
+                if memory_context:
+                    enriched_message = f"{message}\n\n{memory_context}"
 
             # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
@@ -278,9 +279,10 @@ class RoutedWorkflow:
 
                     # --- Auto-learn: if fallback succeeded, remember what went wrong ---
                     if full_text and len(full_text.strip()) > 20:
+                        original_key = agent_key.replace("_scrum_prefetch", "scrum")
                         learn(
                             message,
-                            f"Query '{message}' failed on {agent_key}, "
+                            f"Query '{message}' failed on {original_key}, "
                             f"succeeded on {fallback_key}.",
                         )
 
