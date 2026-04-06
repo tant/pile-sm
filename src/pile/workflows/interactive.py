@@ -25,6 +25,7 @@ from pile.middleware import ToolCallTracker
 from pile.cache import get_cached, set_cached
 from pile.router import smart_route
 from pile.prefetch import prefetch_scrum_data
+from pile.context import recall, learn
 
 logger = logging.getLogger("pile.workflow")
 
@@ -238,13 +239,19 @@ class RoutedWorkflow:
                     agent_key = "_scrum_prefetch"
                     self._sessions.pop("_scrum_prefetch", None)
 
+            # --- Auto-recall: inject memory context into message ---
+            enriched_message = message
+            memory_context = recall(message)
+            if memory_context:
+                enriched_message = f"{message}\n\n{memory_context}"
+
             # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
             self.last_agent_key = agent_key
             logger.info("Route: '%s' → %s", message[:50], agent.name)
             yield WorkflowEvent.executor_invoked(agent.name)
 
-            full_text, tool_calls = await self._execute_agent(agent_key, message, stream=False)
+            full_text, tool_calls = await self._execute_agent(agent_key, enriched_message, stream=False)
 
             # --- Recovery check ---
             should_retry = (
@@ -266,8 +273,17 @@ class RoutedWorkflow:
                     yield WorkflowEvent.executor_invoked(fallback_agent.name)
 
                     full_text, tool_calls = await self._execute_agent(
-                        fallback_key, message, stream=False,
+                        fallback_key, enriched_message, stream=False,
                     )
+
+                    # --- Auto-learn: if fallback succeeded, remember what went wrong ---
+                    if full_text and len(full_text.strip()) > 20:
+                        learn(
+                            message,
+                            f"Query '{message}' failed on {agent_key}, "
+                            f"succeeded on {fallback_key}.",
+                        )
+
                     agent_key = fallback_key
                     agent = fallback_agent
 
