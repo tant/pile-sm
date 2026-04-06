@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 from pile.config import settings
-from pile.tools.jira_tools import (
-    jira_get_changelog,
-    jira_search,
-)
 
 SCRUM_INSTRUCTIONS = """\
 You are an experienced Scrum Master for project {project_key}. Analyze the data below and respond with actionable insights.
@@ -61,7 +57,7 @@ def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
         memory_note = "You have memory_search for past decisions and knowledge base."
 
     if prefetch_data:
-        # Prefetch mode: data injected, minimal tools for deep-dive only
+        # Prefetch mode: data in prompt, no Jira tools needed
         tools = git_tools + memory_tools
         instructions = SCRUM_INSTRUCTIONS.format(
             project_key=settings.jira_project_key,
@@ -70,11 +66,13 @@ def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
             memory_note=memory_note,
         )
     else:
-        # Fallback: full tools (for when prefetch is not possible)
+        # Fallback: full tools (when prefetch is not possible)
         from pile.tools.jira_tools import (
             jira_get_board,
+            jira_get_changelog,
             jira_get_issue,
             jira_get_sprint_issues,
+            jira_search,
         )
         tools = [
             jira_search, jira_get_issue, jira_get_board,

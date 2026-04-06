@@ -141,17 +141,21 @@ def prefetch_scrum_data(query: str, board_id: int) -> str:
 
 
 def _get_active_sprint_id(board_id: int) -> int | None:
-    """Get the active sprint ID for a board."""
-    from pile.tools.jira_tools import jira_get_sprint
+    """Get the active sprint ID for a board via Jira API directly."""
     try:
-        result = jira_get_sprint(board_id=board_id, state="active")
-        # Parse sprint ID from result like "**Sprint 5** (id: 73, state: active)"
-        import re
-        match = re.search(r"id:\s*(\d+),\s*state:\s*active", result)
-        if match:
-            return int(match.group(1))
-    except Exception:
-        pass
+        from pile.tools.jira_tools import _jira_client
+
+        client = _jira_client()
+        resp = client.get(
+            f"/rest/agile/1.0/board/{board_id}/sprint",
+            params={"state": "active", "maxResults": 1},
+        )
+        resp.raise_for_status()
+        sprints = resp.json().get("values", [])
+        if sprints:
+            return sprints[0]["id"]
+    except Exception as e:
+        logger.warning("Failed to get active sprint ID: %s", e)
     return None
 
 

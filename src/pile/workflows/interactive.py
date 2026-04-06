@@ -21,7 +21,7 @@ from pile.agents.scrum import create_scrum_agent
 from pile.agents.sprint import create_sprint_agent
 from pile.agents.triage import create_triage_agent
 from pile.client import create_client
-from pile.middleware import ToolCallTracker, ToolCallRecord
+from pile.middleware import ToolCallTracker
 from pile.cache import get_cached, set_cached
 from pile.router import smart_route
 from pile.prefetch import prefetch_scrum_data
@@ -54,7 +54,7 @@ def _is_error_result(result: str | None) -> bool:
 
 
 def _detect_failure(
-    full_text: str, tool_calls: list[ToolCallRecord], agent_key: str,
+    full_text: str, tool_calls: list, agent_key: str,
     has_prefetch: bool = False,
 ) -> bool:
     """Detect if an agent run produced a poor result that warrants re-routing."""
@@ -228,13 +228,15 @@ class RoutedWorkflow:
                 data = prefetch_scrum_data(message, self.board_id)
                 if data:
                     has_prefetch = True
-                    scrum_agent = create_scrum_agent(
+                    # Create a one-off scrum agent with data — don't overwrite the
+                    # fallback agent in self.agents so it stays available for recovery.
+                    self.agents["_scrum_prefetch"] = create_scrum_agent(
                         self.client,
                         middleware=[self.tracker],
                         prefetch_data=data,
                     )
-                    self.agents["scrum"] = scrum_agent
-                    self._sessions.pop("scrum", None)
+                    agent_key = "_scrum_prefetch"
+                    self._sessions.pop("_scrum_prefetch", None)
 
             # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
