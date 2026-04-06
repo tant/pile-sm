@@ -24,14 +24,40 @@ def check_ollama() -> str | None:
         return f"Ollama health check failed: {e}"
 
 
-def check_openai() -> str | None:
-    """Check if OpenAI-compatible endpoint is reachable."""
+def _list_openai_models() -> list[str] | None:
+    """Fetch model IDs from the OpenAI-compatible endpoint. Returns None on error."""
     base_url = settings.openai_base_url.rstrip("/")
     try:
-        resp = httpx.get(f"{base_url}/models", headers={"Authorization": f"Bearer {settings.openai_api_key}"}, timeout=15.0)
+        resp = httpx.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        return [m["id"] for m in resp.json().get("data", [])]
+    except Exception:
+        return None
+
+
+def check_openai() -> str | None:
+    """Check if OpenAI-compatible endpoint is reachable and required models are loaded."""
+    base_url = settings.openai_base_url.rstrip("/")
+    try:
+        resp = httpx.get(
+            f"{base_url}/models",
+            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            timeout=15.0,
+        )
         if resp.status_code == 401:
             return f"OpenAI endpoint auth failed at {base_url}. Check OPENAI_API_KEY."
         resp.raise_for_status()
+        loaded = [m["id"] for m in resp.json().get("data", [])]
+        model_id = settings.openai_model
+        if model_id not in loaded:
+            return (
+                f"LLM model '{model_id}' not loaded at {base_url}. "
+                f"Available: {', '.join(loaded)}"
+            )
         return None
     except httpx.ConnectError:
         return f"Cannot connect to OpenAI endpoint at {base_url}. Is the server running?"
@@ -67,21 +93,19 @@ def check_embedding_model() -> str | None:
     if not settings.memory_enabled:
         return None
 
+    model_id = settings.embedding_model_id
+
     if settings.llm_provider == "openai":
-        # OpenAI-compatible: check /v1/models endpoint
         base_url = settings.openai_base_url.rstrip("/")
-        try:
-            resp = httpx.get(
-                f"{base_url}/models",
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                timeout=15.0,
-            )
-            resp.raise_for_status()
-            return None
-        except httpx.ConnectError:
+        loaded = _list_openai_models()
+        if loaded is None:
             return f"Cannot check embedding model — endpoint at {base_url} unreachable."
-        except Exception as e:
-            return f"Embedding model health check failed: {e}"
+        if model_id not in loaded:
+            return (
+                f"Embedding model '{model_id}' not loaded at {base_url}. "
+                f"Available: {', '.join(loaded)}"
+            )
+        return None
 
     # Ollama provider: check /api/tags
     host = settings.ollama_host
@@ -89,8 +113,6 @@ def check_embedding_model() -> str | None:
         resp = httpx.get(f"{host}/api/tags", timeout=15.0)
         resp.raise_for_status()
         models = [m["name"] for m in resp.json().get("models", [])]
-        model_id = settings.embedding_model_id
-        # Match with or without :latest tag
         if model_id not in models and f"{model_id}:latest" not in models:
             return (
                 f"Embedding model '{model_id}' not found on {host}. "
@@ -141,8 +163,7 @@ def run_health_checks() -> list[str]:
     if err:
         errors.append(err)
 
-    # Embedding — only check if memory enabled AND Ollama is reachable
-    # (embedding always uses Ollama, even when LLM uses OpenAI provider)
+    # Embedding — check the configured provider
     if settings.memory_enabled:
         err = check_embedding_model()
         if err:

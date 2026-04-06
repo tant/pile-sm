@@ -114,6 +114,35 @@ _AGENT_DESCRIPTIONS: dict[str, str] = {
 _embedding_cache: dict[str, list[float]] | None = None
 
 
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    """Embed a list of texts using the configured provider."""
+    import httpx
+    from pile.config import settings
+
+    if settings.llm_provider == "openai":
+        resp = httpx.post(
+            f"{settings.openai_base_url}/embeddings",
+            json={"model": settings.embedding_model_id, "input": texts},
+            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()["data"]
+        return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
+
+    # Ollama / ollama-native
+    results = []
+    for text in texts:
+        resp = httpx.post(
+            f"{settings.ollama_host}/api/embed",
+            json={"model": settings.embedding_model_id, "input": text},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        results.append(resp.json()["embeddings"][0])
+    return results
+
+
 def _get_embeddings() -> dict[str, list[float]]:
     """Lazily compute and cache agent description embeddings."""
     global _embedding_cache
@@ -121,22 +150,10 @@ def _get_embeddings() -> dict[str, list[float]]:
         return _embedding_cache
 
     try:
-        import httpx
-        from pile.config import settings
-
-        host = settings.ollama_host
-        model = settings.embedding_model_id
-        _embedding_cache = {}
-
-        for agent_key, desc in _AGENT_DESCRIPTIONS.items():
-            resp = httpx.post(
-                f"{host}/api/embed",
-                json={"model": model, "input": desc},
-                timeout=15.0,
-            )
-            resp.raise_for_status()
-            _embedding_cache[agent_key] = resp.json()["embeddings"][0]
-
+        descs = list(_AGENT_DESCRIPTIONS.values())
+        keys = list(_AGENT_DESCRIPTIONS.keys())
+        vectors = _embed_texts(descs)
+        _embedding_cache = dict(zip(keys, vectors))
         logger.info("Cached embeddings for %d agents", len(_embedding_cache))
         return _embedding_cache
     except Exception as e:
@@ -157,23 +174,12 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 def route_query_with_embedding(query: str) -> str:
     """Route using embedding similarity. Returns best matching agent key."""
     try:
-        import httpx
-        from pile.config import settings
-
         embeddings = _get_embeddings()
         if not embeddings:
             return "triage"
 
-        # Embed the query
-        resp = httpx.post(
-            f"{settings.ollama_host}/api/embed",
-            json={"model": settings.embedding_model_id, "input": query},
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        query_emb = resp.json()["embeddings"][0]
+        query_emb = _embed_texts([query])[0]
 
-        # Find best match
         best_key = "triage"
         best_score = 0.0
         for agent_key, agent_emb in embeddings.items():
@@ -199,5 +205,5 @@ def smart_route(query: str) -> str:
     if result:
         return result
 
-    # Phase 2: embedding similarity (needs Ollama, ~100ms)
+    # Phase 2: embedding similarity (~100ms)
     return route_query_with_embedding(query)
