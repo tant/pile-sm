@@ -140,57 +140,19 @@ Agent:"""
 
 def route_query_with_llm(query: str) -> str:
     """Route using a lightweight LLM call. Returns agent key."""
-    try:
-        import httpx
-        from pile.config import settings
+    from pile.client import call_router_model
 
-        prompt = _CLASSIFY_PROMPT.format(query=query)
+    prompt = _CLASSIFY_PROMPT.format(query=query)
+    raw = call_router_model(prompt, max_tokens=20)
 
-        if settings.llm_provider == "openai":
-            resp = httpx.post(
-                f"{settings.openai_base_url}/chat/completions",
-                json={
-                    "model": settings.router_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 20,
-                    "temperature": 0,
-                },
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                timeout=10.0,
-            )
-        else:
-            # Ollama
-            resp = httpx.post(
-                f"{settings.ollama_host}/api/chat",
-                json={
-                    "model": settings.router_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stream": False,
-                    "options": {"num_predict": 20, "temperature": 0},
-                },
-                timeout=10.0,
-            )
-
-        resp.raise_for_status()
-        data = resp.json()
-
-        # Extract the agent name from response
-        if settings.llm_provider == "openai":
-            raw = data["choices"][0]["message"]["content"]
-        else:
-            raw = data["message"]["content"]
-
-        agent_key = raw.strip().lower().split()[0].strip(".,;:!\"'")
+    if raw:
+        agent_key = raw.lower().split()[0].strip(".,;:!\"'")
         if agent_key in _VALID_AGENTS:
             logger.info("LLM classify: '%s' → %s", query[:40], agent_key)
             return agent_key
+        logger.warning("LLM classify returned invalid '%s'", raw[:30])
 
-        logger.warning("LLM classify returned invalid agent '%s', falling back to triage", raw.strip()[:30])
-        return "triage"
-
-    except Exception as e:
-        logger.warning("LLM classify failed: %s", e)
-        return "triage"
+    return "triage"
 
 
 # --- Phase 3: Embedding similarity (last resort) ---

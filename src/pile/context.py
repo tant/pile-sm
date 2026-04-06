@@ -75,55 +75,17 @@ def learn(query: str, lesson: str) -> None:
 
 def _compress(text: str) -> str:
     """Compress a lesson into a short factual statement using the router model."""
-    from pile.config import settings
+    from pile.client import call_router_model
 
-    if not settings.router_model:
-        # No router model — just truncate
-        return text[:200].strip()
+    prompt = (
+        "Compress this into ONE short factual statement (under 50 words). "
+        "Keep only the key fact, remove explanation.\n\n"
+        f"{text}\n\nFact:"
+    )
 
-    try:
-        import httpx
+    result = call_router_model(prompt, max_tokens=80)
+    if result:
+        return result
 
-        prompt = (
-            "Compress this into ONE short factual statement (under 50 words). "
-            "Keep only the key fact, remove explanation.\n\n"
-            f"{text}\n\nFact:"
-        )
-
-        if settings.llm_provider == "openai":
-            resp = httpx.post(
-                f"{settings.openai_base_url}/chat/completions",
-                json={
-                    "model": settings.router_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 80,
-                    "temperature": 0,
-                },
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                timeout=10.0,
-            )
-        else:
-            resp = httpx.post(
-                f"{settings.ollama_host}/api/chat",
-                json={
-                    "model": settings.router_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stream": False,
-                    "options": {"num_predict": 80, "temperature": 0},
-                },
-                timeout=10.0,
-            )
-
-        resp.raise_for_status()
-        data = resp.json()
-
-        if settings.llm_provider == "openai":
-            result = data["choices"][0]["message"]["content"]
-        else:
-            result = data["message"]["content"]
-
-        return result.strip()
-
-    except Exception as e:
-        logger.warning("Compress failed: %s — saving raw", e)
-        return text[:200].strip()
+    # No router model or call failed — truncate
+    return text[:200].strip()

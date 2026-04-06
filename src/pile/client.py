@@ -51,3 +51,50 @@ def _create_raw_client():
         )
 
     raise ValueError(f"Unknown LLM_PROVIDER: {settings.llm_provider}")
+
+
+def call_router_model(prompt: str, max_tokens: int = 20) -> str | None:
+    """Call the lightweight router model for classification/compression.
+
+    Returns the response text, or None on failure. Uses the same provider
+    as the main LLM but with ROUTER_MODEL model ID.
+    """
+    import httpx
+
+    if not settings.router_model:
+        return None
+
+    try:
+        if settings.llm_provider == "openai":
+            resp = httpx.post(
+                f"{settings.openai_base_url}/chat/completions",
+                json={
+                    "model": settings.router_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": 0,
+                },
+                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+                timeout=10.0,
+            )
+        else:
+            resp = httpx.post(
+                f"{settings.ollama_host}/api/chat",
+                json={
+                    "model": settings.router_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "options": {"num_predict": max_tokens, "temperature": 0},
+                },
+                timeout=10.0,
+            )
+
+        resp.raise_for_status()
+        data = resp.json()
+
+        if settings.llm_provider == "openai":
+            return data["choices"][0]["message"]["content"].strip()
+        return data["message"]["content"].strip()
+
+    except Exception:
+        return None
