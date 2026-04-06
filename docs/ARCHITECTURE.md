@@ -1,8 +1,8 @@
 # Architecture Design: Pile
 
-> **Version**: 0.6
+> **Version**: 0.7
 > **Date**: 2026-04-06
-> **Status**: In Development (V2 — Prefetch + Multi-model routing + Recovery)
+> **Status**: In Development (V2 — Memory-aware + Prefetch + Multi-model routing)
 
 ---
 
@@ -32,12 +32,11 @@
                            │ agent key
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   PREFETCH LAYER (scrum only)                    │
+│                   CONTEXT LAYER                                  │
 │                                                                 │
-│  Detect query type (standup/velocity/blockers/...)              │
-│  → Fetch Jira data deterministically (API calls, no LLM)        │
-│  → Inject data into agent prompt                                │
-│  Other agents: skip prefetch, use tools directly                │
+│  Auto-recall: search ChromaDB memories → inject into message    │
+│  Prefetch (scrum): fetch Jira data → inject into prompt         │
+│  Auto-learn: recovery success → compress lesson → save memory   │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
@@ -281,6 +280,36 @@ Query type mapping (`prefetch.py`):
 | data_quality | sprint issues |
 | general | board info + sprint issues |
 
+### 4.4 Memory Context (Auto-recall + Auto-learn)
+
+Tích hợp memory vào workflow chính — không chỉ khi user chủ động "nhớ giúp".
+
+**Auto-recall** (`context.recall`): Trước mỗi agent run, search ChromaDB memories bằng user query. Nếu có context liên quan (distance < 1.0), inject vào message:
+
+```
+User: "Tìm issue resolved tuần này"
+Recall: "TETRA project uses 'Done' instead of 'Resolved' status"
+→ Agent nhận: "Tìm issue resolved tuần này\n\nRelevant context from memory:\n- TETRA uses Done not Resolved"
+→ Agent dùng status=Done ngay lần đầu
+```
+
+**Auto-learn** (`context.learn`): Khi recovery trigger thành công (agent A fail → agent B OK), nén bài học qua router model (Gemma 2B) rồi lưu vào ChromaDB:
+
+```
+Recovery: board agent failed, jira_query succeeded for "Khanh đang làm gì?"
+→ Compress: "Queries about who is doing what should use jira_query, not board"
+→ Save to memories collection (type=auto_learn, source=system)
+```
+
+**Compression**: Dùng Gemma 2B prompt ngắn "Compress this into ONE short factual statement (under 50 words)". Tiết kiệm token lưu trữ — từ ~100 words xuống ~20 words.
+
+Vòng lặp tự cải thiện:
+```
+Query fail → recovery → learn lesson → save memory
+    ↓
+Next similar query → recall lesson → agent đúng từ đầu
+```
+
 ---
 
 ## 5. Orchestration Workflows
@@ -288,7 +317,9 @@ Query type mapping (`prefetch.py`):
 ### 5.1 Interactive (Primary — Q&A)
 
 ```
-User → smart_route() → [Prefetch if scrum] → Agent → [Recovery if fail] → Response
+User → smart_route() → recall memory → [prefetch if scrum] → Agent → Response
+                                                                ↓ fail?
+                                                            recovery → fallback agent → learn lesson → Response
 ```
 
 Mỗi agent có riêng `AgentSession` để giữ conversation history.
@@ -384,6 +415,7 @@ src/pile/
 ├── health.py              # Startup health checks (provider-aware)
 ├── router.py              # 3-phase router (keyword → LLM → embedding)
 ├── prefetch.py            # Data prefetch for Scrum Agent
+├── context.py             # Auto-recall + auto-learn (memory integration)
 ├── middleware.py           # ToolCallTracker (timing, logging, loop detection)
 ├── cache.py               # Semantic cache (exact-match, 5min TTL)
 ├── agents/
@@ -434,6 +466,9 @@ src/pile/
 | Singleton httpx client cho Jira | Reuse TCP/TLS connections |
 | Cùng 1 provider cho tất cả models | Đơn giản ops — 1 endpoint (LM Studio hoặc Ollama) |
 | Embedding giữ cho Memory/RAG, bỏ khỏi routing | Embedding tốt cho semantic search docs, kém cho classify intent |
+| Auto-recall trước mỗi agent run | Agent có context từ memory → gọi đúng tool lần đầu, tránh loop |
+| Auto-learn từ recovery | Mỗi lần fail-recover thành lesson → lần sau không lặp sai lầm |
+| Compress lesson qua Gemma 2B | Tiết kiệm token lưu trữ (~100 words → ~20 words), cùng model đã load |
 | `@_safe_jira_call` decorator | DRY error handling cho tất cả Jira tools |
 | Git tools validate input qua regex | Chống command injection |
 | Tool-based retrieval thay ContextProvider | ContextProvider inject mọi call → lãng phí token |

@@ -1,6 +1,6 @@
 # Multi-Model Architecture: Right Model, Right Job
 
-> **Status**: Implemented (Router + Agent) / Planned (Synthesizer)
+> **Status**: Implemented (Router + Agent + Memory Compression) / Planned (Synthesizer)
 > **Date**: 2026-04-06
 > **Context**: Pile Scrum Master agent, 8GB RAM, Apple Silicon
 
@@ -26,9 +26,13 @@ User Input
   │     └── tool calling + response generation
   │     └── 3-5 tools per agent, max 5 iterations
   │
-  └── [4] nomic-embed-text — Embedding Model (~50ms)
-        └── memory search, document RAG
-        └── KHÔNG dùng cho routing nữa
+  ├── [4] nomic-embed-text — Embedding Model (~50ms)
+  │     └── memory search, document RAG
+  │     └── KHÔNG dùng cho routing nữa
+  │
+  └── [*] Gemma 4 E2B — Memory Compression (~500ms)
+        └── compress lessons before saving to memory
+        └── reuse same model as router (no extra RAM)
 ```
 
 ### Tại sao tách Router Model?
@@ -46,7 +50,7 @@ Embedding chỉ so mặt chữ giữa query và agent description. LLM 2B hiểu
 
 | Model | Role | RAM | Latency |
 |---|---|---|---|
-| Gemma 4 E2B (2B) | Router classify | ~1.5GB | ~500ms |
+| Gemma 4 E2B (2B) | Router classify + memory compress | ~1.5GB | ~500ms |
 | Qwen 3.5-4B | Agent (tool calling) | ~3GB | 20-60s |
 | nomic-embed-text | Memory/RAG embedding | ~0.3GB | ~50ms |
 | **Tổng** | | **~5GB** | Dư cho OS + context |
