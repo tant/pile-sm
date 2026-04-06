@@ -10,6 +10,10 @@ import logging
 
 logger = logging.getLogger("pile.context")
 
+# ChromaDB cosine distance thresholds [0, 2]. Lower = more similar.
+RECALL_MAX_DISTANCE = 0.8    # similarity > 0.6 — fairly relevant
+DEDUP_MAX_DISTANCE = 0.3     # similarity > 0.85 — near-duplicate
+
 
 def recall(query: str, n_results: int = 3) -> str:
     """Search memory for context relevant to the query. Returns formatted hint or empty."""
@@ -23,18 +27,11 @@ def recall(query: str, n_results: int = 3) -> str:
         if not results:
             return ""
 
-        # Filter by relevance — ChromaDB cosine distance [0, 2].
-        # < 0.8 means similarity > 0.6, fairly relevant.
-        relevant = [r for r in results if r.get("distance", 2.0) < 0.8]
-        if not relevant:
-            return ""
-
-        lines = []
-        for r in relevant:
-            content = r.get("content", "")
-            if content:
-                lines.append(f"- {content}")
-
+        lines = [
+            f"- {r['content']}"
+            for r in results
+            if r.get("distance", 2.0) < RECALL_MAX_DISTANCE and r.get("content")
+        ]
         if not lines:
             return ""
 
@@ -54,10 +51,9 @@ def learn(query: str, lesson: str) -> None:
         if not settings.memory_enabled:
             return
 
-        # Check for duplicate — if a similar memory already exists, skip
-        from pile.memory.store import search_memories
+        from pile.memory.store import search_memories, add_memory
         existing = search_memories(lesson, n_results=1)
-        if existing and existing[0].get("distance", 2.0) < 0.3:
+        if existing and existing[0].get("distance", 2.0) < DEDUP_MAX_DISTANCE:
             logger.debug("Learn: similar memory already exists, skipping")
             return
 
@@ -65,7 +61,6 @@ def learn(query: str, lesson: str) -> None:
         if not compressed or len(compressed) < 5:
             return
 
-        from pile.memory.store import add_memory
         mem_id = add_memory(compressed, memory_type="auto_learn", source="system")
         logger.info("Learn: saved '%s' (id=%s)", compressed[:60], mem_id)
 
@@ -87,5 +82,8 @@ def _compress(text: str) -> str:
     if result:
         return result
 
-    # No router model or call failed — truncate
-    return text[:200].strip()
+    # No router model or call failed — truncate at word boundary
+    truncated = text[:200]
+    if len(text) > 200:
+        truncated = truncated.rsplit(" ", 1)[0]
+    return truncated.strip()

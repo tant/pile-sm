@@ -12,6 +12,9 @@ from chromadb.api.types import EmbeddingFunction
 from pile.config import settings
 
 _client: chromadb.ClientAPI | None = None
+_embed_fn: EmbeddingFunction | None = None
+_memories_col: chromadb.Collection | None = None
+_documents_col: chromadb.Collection | None = None
 
 
 def _get_client() -> chromadb.ClientAPI:
@@ -25,36 +28,49 @@ def _get_client() -> chromadb.ClientAPI:
 
 
 def _embedding_fn() -> EmbeddingFunction:
-    """Create embedding function based on LLM provider config."""
+    """Return a cached embedding function based on LLM provider config."""
+    global _embed_fn
+    if _embed_fn is not None:
+        return _embed_fn
+
     if settings.llm_provider == "openai":
         from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
-        return OpenAIEmbeddingFunction(
+        _embed_fn = OpenAIEmbeddingFunction(
             api_base=settings.openai_base_url,
             api_key=settings.openai_api_key,
             model_name=settings.embedding_model_id,
         )
-
-    from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
-    return OllamaEmbeddingFunction(
-        url=f"{settings.ollama_host}/api/embed",
-        model_name=settings.embedding_model_id,
-    )
+    else:
+        from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+        _embed_fn = OllamaEmbeddingFunction(
+            url=f"{settings.ollama_host}/api/embed",
+            model_name=settings.embedding_model_id,
+        )
+    return _embed_fn
 
 
 def _memories_collection() -> chromadb.Collection:
-    return _get_client().get_or_create_collection(
-        name="memories",
-        embedding_function=_embedding_fn(),
-        metadata={"hnsw:space": "cosine"},
-    )
+    """Return cached memories collection (singleton)."""
+    global _memories_col
+    if _memories_col is None:
+        _memories_col = _get_client().get_or_create_collection(
+            name="memories",
+            embedding_function=_embedding_fn(),
+            metadata={"hnsw:space": "cosine"},
+        )
+    return _memories_col
 
 
 def _documents_collection() -> chromadb.Collection:
-    return _get_client().get_or_create_collection(
-        name="documents",
-        embedding_function=_embedding_fn(),
-        metadata={"hnsw:space": "cosine"},
-    )
+    """Return cached documents collection (singleton)."""
+    global _documents_col
+    if _documents_col is None:
+        _documents_col = _get_client().get_or_create_collection(
+            name="documents",
+            embedding_function=_embedding_fn(),
+            metadata={"hnsw:space": "cosine"},
+        )
+    return _documents_col
 
 
 # --- Memories (explicit remember / forget) ---

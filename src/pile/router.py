@@ -189,17 +189,14 @@ def _embed_texts(texts: list[str]) -> list[list[float]]:
         data = resp.json()["data"]
         return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
 
-    # Ollama / ollama-native
-    results = []
-    for text in texts:
-        resp = httpx.post(
-            f"{settings.ollama_host}/api/embed",
-            json={"model": settings.embedding_model_id, "input": text},
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        results.append(resp.json()["embeddings"][0])
-    return results
+    # Ollama / ollama-native — batch all texts in one call
+    resp = httpx.post(
+        f"{settings.ollama_host}/api/embed",
+        json={"model": settings.embedding_model_id, "input": texts},
+        timeout=15.0,
+    )
+    resp.raise_for_status()
+    return resp.json()["embeddings"]
 
 
 def _get_embeddings() -> dict[str, list[float]]:

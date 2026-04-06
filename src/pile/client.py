@@ -2,7 +2,23 @@
 
 from __future__ import annotations
 
+import logging
+
+import httpx
+
 from pile.config import settings
+
+logger = logging.getLogger("pile.client")
+
+# Singleton httpx client for router model calls (reuses TCP connections).
+_router_http: httpx.Client | None = None
+
+
+def _router_client() -> httpx.Client:
+    global _router_http
+    if _router_http is None or _router_http.is_closed:
+        _router_http = httpx.Client(timeout=10.0)
+    return _router_http
 
 
 def create_client():
@@ -59,26 +75,29 @@ def call_router_model(prompt: str, max_tokens: int = 20) -> str | None:
     Returns the response text, or None on failure. Uses the same provider
     as the main LLM but with ROUTER_MODEL model ID.
     """
-    import httpx
-
     if not settings.router_model:
         return None
 
+    client = _router_client()
     try:
-        if settings.llm_provider == "openai":
-            resp = httpx.post(
-                f"{settings.openai_base_url}/chat/completions",
+        if settings.llm_provider in ("openai", "ollama"):
+            resp = client.post(
+                f"{settings.openai_base_url}/chat/completions"
+                if settings.llm_provider == "openai"
+                else f"{settings.ollama_host}/v1/chat/completions",
                 json={
                     "model": settings.router_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": max_tokens,
                     "temperature": 0,
                 },
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                timeout=10.0,
+                headers={"Authorization": f"Bearer {settings.openai_api_key}"}
+                if settings.llm_provider == "openai"
+                else {},
             )
         else:
-            resp = httpx.post(
+            # ollama-native
+            resp = client.post(
                 f"{settings.ollama_host}/api/chat",
                 json={
                     "model": settings.router_model,
@@ -86,15 +105,17 @@ def call_router_model(prompt: str, max_tokens: int = 20) -> str | None:
                     "stream": False,
                     "options": {"num_predict": max_tokens, "temperature": 0},
                 },
-                timeout=10.0,
             )
 
         resp.raise_for_status()
         data = resp.json()
 
-        if settings.llm_provider == "openai":
+        # OpenAI-compatible format (both "openai" and "ollama" providers)
+        if "choices" in data:
             return data["choices"][0]["message"]["content"].strip()
+        # Ollama native format
         return data["message"]["content"].strip()
 
-    except Exception:
+    except Exception as e:
+        logger.warning("Router model call failed: %s", e)
         return None

@@ -211,6 +211,7 @@ class RoutedWorkflow:
         from agent_framework._types import AgentResponseUpdate, Content
 
         self._is_running = True
+        agent_name = "unknown"
         try:
             # Check cache first (read-only queries)
             agent_key = smart_route(message)
@@ -248,19 +249,20 @@ class RoutedWorkflow:
 
             # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
+            agent_name = agent.name
             self.last_agent_key = agent_key
-            logger.info("Route: '%s' → %s", message[:50], agent.name)
-            yield WorkflowEvent.executor_invoked(agent.name)
+            logger.info("Route: '%s' → %s", message[:50], agent_name)
+            yield WorkflowEvent.executor_invoked(agent_name)
 
             full_text, tool_calls = await self._execute_agent(agent_key, enriched_message, stream=False)
 
             # --- Recovery check ---
-            should_retry = (
+            is_failure = (
                 agent_key not in _NO_RETRY
                 and _detect_failure(full_text, tool_calls, agent_key, has_prefetch)
             )
 
-            if should_retry:
+            if is_failure:
                 fallback_key = _get_fallback(agent_key, set(self.agents.keys()))
                 if fallback_key:
                     logger.info(
@@ -288,23 +290,23 @@ class RoutedWorkflow:
 
                     agent_key = fallback_key
                     agent = fallback_agent
+                    agent_name = fallback_agent.name
+                    is_failure = False  # reset for cache check
 
             # Emit final output
             if full_text:
                 yield WorkflowEvent.output(agent.name, AgentResponseUpdate(contents=[Content(type="text", text=full_text)]))
 
-            # Cache read-only responses (only if quality is OK)
+            # Cache read-only responses (only if not a failed first attempt)
             if full_text and agent_key not in ("jira_write", "memory", "browser"):
-                if not _detect_failure(full_text, tool_calls, agent_key, has_prefetch):
-                    set_cached(message, full_text, agent.name)
+                if not is_failure:
+                    set_cached(message, full_text, agent_name)
 
             yield WorkflowEvent.executor_completed(agent.name)
 
         except Exception as e:
             logger.exception("Workflow error: %s", e)
-            yield WorkflowEvent.executor_failed(
-                agent.name if "agent" in dir() else "unknown", str(e),
-            )
+            yield WorkflowEvent.executor_failed(agent_name, str(e))
         finally:
             self._is_running = False
 
