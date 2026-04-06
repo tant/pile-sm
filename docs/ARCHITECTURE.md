@@ -1,8 +1,8 @@
 # Architecture Design: Pile
 
-> **Version**: 0.4
-> **Date**: 2026-04-05
-> **Status**: In Development (V2 — Memory + RAG)
+> **Version**: 0.5
+> **Date**: 2026-04-06
+> **Status**: In Development (V2 — Multi-model routing + Recovery)
 
 ---
 
@@ -21,488 +21,366 @@
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    ORCHESTRATION LAYER                           │
+│                    ROUTING LAYER                                 │
+│                                                                 │
+│  Phase 1: Keyword regex (<1ms, ~70% queries)                    │
+│  Phase 2: LLM classify — Gemma 2B (~500ms, semantic)           │
+│  Phase 3: Embedding fallback (if no router model)               │
+│                                                                 │
+│  Cache: exact-match (5min TTL, read-only queries)               │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ agent key
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    AGENT LAYER                                   │
 │              Microsoft Agent Framework 1.0                       │
 │                                                                 │
-│  ┌─────────────┐                                                │
-│  │   Triage     │ ◄── Entry point, phân loại request            │
-│  │   Agent      │     và route đến agent phù hợp                │
-│  └──────┬──────┘     hoặc trả lời trực tiếp                    │
-│         │ handoff                                                │
-│         ▼                                                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │  Jira Agent  │  │  Git Agent   │  │  Scrum Agent │          │
-│  │              │  │              │  │              │          │
-│  │  - Search    │  │  - Commits   │  │  - Standup   │          │
-│  │  - CRUD      │  │  - Branches  │  │  - Planning  │          │
-│  │  - Sprint    │  │  - Diff      │  │  - Retro     │          │
-│  │  - Board     │  │  - Blame     │  │  - Coaching  │          │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
-│         │                 │                  │                   │
-└─────────┼─────────────────┼──────────────────┼──────────────────┘
-          │                 │                  │
-          ▼                 ▼                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        TOOL LAYER                               │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐  │
+│  │ JiraQuery  │ │ JiraWrite  │ │   Board    │ │  Sprint    │  │
+│  │ 4 tools    │ │ 5 tools    │ │ 3 tools    │ │ 5 tools    │  │
+│  │ read-only  │ │ approval   │ │ read-only  │ │ mixed      │  │
+│  └────────────┘ └────────────┘ └────────────┘ └────────────┘  │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐  │
+│  │   Epic     │ │    Git     │ │   Scrum    │ │  Triage    │  │
+│  │ 3 tools    │ │ 5 tools    │ │ 5-9 tools  │ │ mem+browser│  │
+│  │ read-only  │ │ read-only  │ │ read-only  │ │ fallback   │  │
+│  └────────────┘ └────────────┘ └────────────┘ └────────────┘  │
 │                                                                 │
-│  ┌──────────────────┐  ┌──────────────┐                         │
-│  │  Jira Tools       │  │  Git Tools   │                         │
-│  │                   │  │              │                         │
-│  │  jira_search      │  │  git_log     │                         │
-│  │  jira_get_issue   │  │  git_diff    │                         │
-│  │  jira_get_sprint  │  │  git_branch  │                         │
-│  │  jira_get_sprint  │  │  git_show    │                         │
-│  │    _issues        │  │  git_blame   │                         │
-│  │  jira_get_board   │  │              │                         │
-│  │  jira_create_issue│  └──────┬───────┘                         │
-│  │  jira_transition  │         │                                 │
-│  │    _issue         │         │                                 │
-│  │  jira_add_comment │         │                                 │
-│  └──────┬────────────┘         │                                 │
-│         │                      │                                 │
-└─────────┼──────────────────────┼────────────────────────────────┘
-          │                      │
-          ▼                      ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
-│  Jira REST API   │ │  Git CLI (local) │ │  Browser         │
-│  (httpx)         │ │  (subprocess)    │ │  (Playwright +   │
-└──────────────────┘ └──────────────────┘ │   Firefox)       │
-                                          └──────────────────┘
+│  Recovery: agent fail → fallback chain → retry 1x               │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+          ┌────────────────┼────────────────┐
+          ▼                ▼                ▼
+┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│  Jira REST API   │ │  Git CLI     │ │  Browser         │
+│  (httpx)         │ │  (subprocess)│ │  (Playwright)    │
+└──────────────────┘ └──────────────┘ └──────────────────┘
 
-┌─────────────────────────────────────────────────────────────────���
+┌─────────────────────────────────────────────────────────────────┐
 │                      MEMORY LAYER                                │
 │                                                                 │
-│  ┌──────────────────┐  ┌──────────────────┐                     │
-│  │  Memory Tools     │  │  Document Tools  │                     │
-│  │  memory_remember  │  │  memory_ingest   │                     │
-│  │  memory_forget    │  │  memory_list     │                     │
-│  │  memory_search    │  │  memory_remove   │                     │
-│  └──────┬───────────┘  └──────┬───────────┘                     │
-│         │                     │                                  │
-│         ▼                     ▼                                  │
-│  ┌─────────────────────────────────────────┐                    ��
-│  │  ChromaDB (embedded, persistent)         │                    │
-│  │  Collections: memories | documents       │                    │
-│  │  Storage: ~/.pile/chromadb/              │                    │
-│  └─────────────────────────────────────────┘                    │
+│  ChromaDB (embedded, persistent at ~/.pile/chromadb/)            │
+│  Collections: memories | documents                              │
+│  Embedding: configured provider (LM Studio / Ollama)            │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                      LLM LAYER                                   │
 │                                                                 │
-│  Ollama @ localhost:11434 (configurable)                            │
-│  — hoặc OpenAI-compatible endpoint (LM Studio)                  │
+│  Provider: LM Studio (OpenAI-compatible) / Ollama               │
 │                                                                 │
-│  LLM: configurable via .env (OLLAMA_MODEL_ID / OPENAI_MODEL)   │
-│  Default: qwen3.5:9b (tested tool calling OK)                   │
-│  Embedding: nomic-embed-text (for Memory/RAG)                   │
-│  All agents share the same LLM model                            │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
+│  │ Router Model     │  │ Agent Model      │  │ Embedding    │  │
+│  │ gemma-4-e2b-it   │  │ qwen3.5-4b-mlx   │  │ nomic-embed  │  │
+│  │ classify only    │  │ tool calling     │  │ memory/RAG   │  │
+│  │ ~500ms, 1 token  │  │ ~20-60s          │  │ ~50ms        │  │
+│  └──────────────────┘  └──────────────────┘  └──────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Agent Design
+## 2. Routing — 3-Phase Smart Router
 
-Tất cả agents được tạo qua `client.as_agent()` — method của Agent Framework tạo agent từ LLM client.
+Deterministic routing thay thế HandoffBuilder (bị overwhelm model 9B với 7 transfer tools).
 
-### 2.1 Triage Agent (Entry Point)
+### Phase 1: Keyword Matching (<1ms)
 
-**Role**: Router + Memory handler — phân loại user request, handoff đến agent chuyên biệt, xử lý trực tiếp memory/knowledge operations.
-
-Khi `MEMORY_ENABLED=true`, Triage Agent được gắn 6 memory tools để xử lý trực tiếp các yêu cầu nhớ/quên/tìm kiếm/nạp tài liệu — không cần handoff, giảm latency cho model 9B.
+Regex patterns kiểm tra theo thứ tự ưu tiên. First match wins.
 
 ```python
-triage_agent = client.as_agent(
-    name="TriageAgent",
-    description="Routes requests + handles memory/knowledge operations directly",
-    instructions=TRIAGE_INSTRUCTIONS,
-    tools=[memory_remember, memory_forget, memory_search,
-           memory_ingest_document, memory_list_documents, memory_remove_document],
-)
+_ROUTES = [
+    ("memory",     [r"nhớ giúp", r"remember", r"forget", ...]),
+    ("browser",    [r"mở trang", r"open url", r"https?://", ...]),
+    ("jira_query", [r"[A-Z]+-\d+", ...]),           # issue key → jira_query
+    ("jira_query", [r"curl", r"changelog", ...]),
+    ("jira_write", [r"tạo issue", r"create bug", r"assign", ...]),
+    ("board",      [r"\bboard\b", ...]),
+    ("scrum",      [r"standup", r"velocity", r"workload", r"báo cáo", ...]),
+    ("sprint",     [r"\bsprint\b", ...]),
+    ("epic",       [r"\bepic\b", r"\bbacklog\b"]),
+    ("git",        [r"\bgit\b", r"\bcommit\b", ...]),
+    ("jira_query", [r"tìm", r"search", r"issue", r"status", ...]),
+    ("triage",     [r"^chào", r"^hello", r"^hi", ...]),
+]
 ```
 
-Routing rules:
-- Jira-related → handoff to JiraAgent
-- Git-related → handoff to GitAgent
-- Scrum process → handoff to ScrumAgent
-- **Memory/knowledge operations → xử lý trực tiếp bằng memory tools**
-- General greetings → respond directly
+Xử lý ~70% queries. Thứ tự quan trọng — scrum trước sprint để bắt "sprint review", "báo cáo sprint".
 
-### 2.2 Jira Agent
+### Phase 2: LLM Classifier (~500ms)
 
-**Role**: Chuyên gia Jira — đọc/ghi dữ liệu Jira qua REST API.
+Khi keyword không match, gọi router model (Gemma 2B) với prompt classify ngắn:
 
-```python
-jira_agent = client.as_agent(
-    name="JiraAgent",
-    description="Jira specialist: search, CRUD issues, sprints, boards",
-    instructions=JIRA_INSTRUCTIONS.format(
-        project_key=settings.jira_project_key,
-        jira_url=settings.jira_base_url,
-    ),
-    tools=[
-        jira_search, jira_get_issue,
-        jira_get_sprint, jira_get_sprint_issues, jira_get_board,
-        jira_create_issue, jira_transition_issue, jira_add_comment,
-    ],
-)
+```
+Pick one agent for this query. Reply ONLY the agent name.
+
+jira_query = search/view/list issues, who is assigned what, ...
+scrum = standup, workload, velocity, review, retro, ...
+...
+
+Query: "Khanh đang bận gì vậy?"
+Agent:
 ```
 
-Tools:
-- **Read**: `jira_search`, `jira_get_issue`, `jira_get_sprint`, `jira_get_sprint_issues`, `jira_get_board`
-- **Write** (require approval): `jira_create_issue`, `jira_transition_issue`, `jira_add_comment`
+Model trả 1 token duy nhất (ví dụ `jira_query`). Không cần tool calling — bất kỳ model nào follow instruction được đều dùng được (Gemma, Phi, SmolLM...).
 
-### 2.3 Git Agent
+Config qua `ROUTER_MODEL` trong `.env`. Cùng provider endpoint, chỉ khác model ID.
 
-**Role**: Chuyên gia Git — tương tác với Git repositories local. Optional — không tạo nếu chưa config repos.
+### Phase 3: Embedding Fallback
 
-```python
-git_agent = client.as_agent(
-    name="GitAgent",
-    description="Git specialist: commits, branches, diffs, blame",
-    instructions=GIT_INSTRUCTIONS.format(repos=repos_str),
-    tools=[git_log, git_diff, git_branch_list, git_show, git_blame],
-)
-```
+Nếu `ROUTER_MODEL` không set, dùng cosine similarity giữa query embedding và agent descriptions. Kém chính xác hơn LLM classify (~60% vs ~89%).
 
-Tất cả tools đều read-only, chạy qua subprocess với validation chống injection:
-- `_validate_repo()` — chỉ cho phép repos trong allowlist
-- `_validate_ref()` — regex kiểm tra branch/commit ref
-- `_validate_path()` — chặn path traversal, absolute paths
+### Caching
 
-### 2.4 Scrum Agent
-
-**Role**: Scrum Master ảo — tổng hợp, phân tích, coaching.
-
-Scrum Agent **có access trực tiếp đến Jira + Git tools** để tự thu thập data khi cần tổng hợp báo cáo, thay vì phải handoff qua lại.
-
-```python
-scrum_agent = client.as_agent(
-    name="ScrumAgent",
-    description="Scrum Master: standup, planning, retro, coaching, reports, data quality, timeline tracking",
-    instructions=SCRUM_INSTRUCTIONS.format(
-        project_key=settings.jira_project_key,
-        git_note=git_note,
-        memory_note=memory_note,
-    ),
-    tools=[jira_search, jira_get_issue, jira_get_sprint, jira_get_sprint_issues,
-           git_log, git_diff,    # git tools only if repos configured
-           memory_search],       # memory tool only if memory enabled
-)
-```
-
-Khi `MEMORY_ENABLED=true`, Scrum Agent có thêm `memory_search` để tự query knowledge base khi cần tham khảo methodology, past decisions, hoặc tài liệu đã nạp (ví dụ: SAFe whitepaper).
-
-Prompt được tối ưu cho local LLM (~45 dòng) — mỗi use case mô tả bằng bullet ngắn gọn thay vì hướng dẫn step-by-step chi tiết. Các lĩnh vực:
-
-- Standup, Sprint Review, Retrospective
-- Data Quality Audit, Timeline & Delays
-- Blocker Tracking, Workload Balance, WIP Limits
-- Cycle Time, Sprint Goal, Dependencies
-- Stakeholder Summary, Meeting Prep
+Exact-match cache (MD5 key, 5-min TTL, max 100 entries). Chỉ cache read-only queries — skip `jira_write`, `memory`, `browser`.
 
 ---
 
-## 3. Orchestration
+## 3. Agent Design — 8 Specialist Agents
 
-### 3.1 Handoff Workflow (Primary — Interactive Q&A)
+Mỗi agent chỉ thấy 3-5 tools riêng. Tránh overwhelm model nhỏ.
 
-```python
-from agent_framework.orchestrations import HandoffBuilder
+### 3.1 JiraQuery Agent (4 tools)
 
-workflow = (
-    HandoffBuilder(
-        name="pile_sm",
-        participants=[triage, jira, scrum, git],  # git only if configured
-    )
-    .with_start_agent(triage)
-    .add_handoff(triage, [jira, git, scrum])
-    .add_handoff(scrum, [jira, git, triage])
-    .add_handoff(jira, [triage, scrum])
-    .add_handoff(git, [triage, scrum])
-    .build()
-)
-```
+Đọc data Jira: `jira_search`, `jira_get_issue`, `jira_get_changelog`, `jira_curl_command`.
 
-**Flow examples**:
+### 3.2 JiraWrite Agent (5 tools, approval required)
 
-```
-User: "Sprint hiện tại có bao nhiêu issues?"
-  → Triage → handoff → Jira Agent → jira_get_sprint → trả lời
+Ghi data Jira: `jira_create_issue`, `jira_update_issue`, `jira_transition_issue`, `jira_add_comment`, `jira_link_issues`. Tất cả require approval.
 
-User: "Tạo issue mới: Fix login bug, assign cho Minh"
-  → Triage → handoff → Jira Agent → confirm với user → jira_create_issue → done
+### 3.3 Board Agent (3 tools)
 
-User: "Tổng hợp standup cho team hôm nay"
-  → Triage → handoff → Scrum Agent → jira_search (issues updated)
-                                    → git_log (commits today)
-                                    → tổng hợp report → trả lời
-```
+Board info: `jira_list_boards`, `jira_get_board`, `jira_get_board_config`.
 
-### 3.2 Human-in-the-Loop (Write Operations)
+### 3.4 Sprint Agent (5 tools)
 
-Tất cả write tools dùng `@tool(approval_mode="always_require")`. Khi agent gọi write tool, workflow tạm dừng và hỏi user confirm.
+Sprint management: `jira_get_sprint`, `jira_get_sprint_issues`, `jira_create_sprint`, `jira_move_to_sprint`, `jira_move_to_backlog`. Write ops require approval.
 
-```python
-from agent_framework import tool
+### 3.5 Epic Agent (3 tools)
 
-@tool(approval_mode="always_require")
-@_safe_jira_call
-def jira_create_issue(
-    summary: Annotated[str, Field(description="Issue title")],
-    issue_type: Annotated[str, Field(description="Type: Task, Bug, Story, Epic")] = "Task",
-    description: Annotated[str | None, Field(description="Issue description")] = None,
-    assignee_id: Annotated[str | None, Field(description="Assignee account ID")] = None,
-    priority: Annotated[str | None, Field(description="Priority: Highest, High, Medium, Low, Lowest")] = None,
-) -> str:
-    """Create a new Jira issue. Requires user approval before execution."""
-    ...
-```
+Epics + backlog: `jira_get_epics`, `jira_get_epic_issues`, `jira_get_backlog`.
 
-Write tools: `jira_create_issue`, `jira_transition_issue`, `jira_add_comment`
+### 3.6 Git Agent (5 tools, optional)
 
-UI handling:
-- **Chainlit**: Hiển thị dialog Approve/Reject, xử lý iterative (max 20 rounds)
-- **CLI**: Hiển thị tool name + args, hỏi `Approve? (y/n)`
+Git repos: `git_log`, `git_diff`, `git_branch_list`, `git_show`, `git_blame`. Chỉ tạo khi `GIT_REPOS` configured. Input validation chống injection.
 
-### 3.3 Sequential Workflow (Standup Report)
+### 3.7 Scrum Agent (5-9 tools)
 
-Dùng khi cần chạy pipeline cố định, trigger bằng `/standup` trong CLI:
+Scrum Master với direct access Jira + optional Git/Memory/Browser tools:
+- **Base**: `jira_search`, `jira_get_issue`, `jira_get_board`, `jira_get_sprint_issues`, `jira_get_changelog`
+- **Optional**: `git_log`, `git_diff`, `memory_search`, `browser_open`, `browser_read`
 
-```python
-from agent_framework.orchestrations import SequentialBuilder
+Xử lý: standup, sprint review, velocity, workload, blockers, cycle time, data quality, stakeholder summary, meeting prep.
 
-standup_pipeline = SequentialBuilder(
-    participants=[jira_agent, git_agent, scrum_agent]  # git_agent only if configured
-).build()
+### 3.8 Triage Agent (memory + browser tools)
 
-# Jira Agent gathers issue updates → Git Agent gathers commits → Scrum Agent synthesizes
-```
+Xử lý memory operations (remember, forget, search, ingest documents) và browser tasks (open URLs, scrape, login). Không có Jira/Git tools — nếu nhận query Jira, nó thú nhận không có tool phù hợp → trigger recovery.
 
-### 3.4 Group Chat Workflow (Sprint Planning)
+### Tool Overlap
 
-Dùng khi cần nhiều agent thảo luận, trigger bằng `/planning` trong CLI:
+| Tool | Agents có access |
+|---|---|
+| `jira_search`, `jira_get_issue` | JiraQuery, Scrum |
+| `jira_get_changelog` | JiraQuery, Scrum |
+| `jira_get_board` | Board, Scrum |
+| `jira_get_sprint_issues` | Sprint, Scrum |
+| `git_log`, `git_diff` | Git, Scrum (optional) |
+| `memory_search` | Triage, Scrum (optional) |
+| `browser_open`, `browser_read` | Triage, Scrum (optional) |
 
-```python
-from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
-
-def round_robin(state: GroupChatState) -> str:
-    names = list(state.participants.keys())
-    return names[state.current_round % len(names)]
-
-planning_session = GroupChatBuilder(
-    participants=[jira_agent, git_agent, scrum_agent],
-    selection_func=round_robin,
-    termination_condition=lambda msgs: sum(1 for m in msgs if m.role == "assistant") >= 8,
-).build()
-```
+Overlap có chủ đích — Scrum Agent cần data từ nhiều nguồn để phân tích.
 
 ---
 
-## 4. Tool Implementation
+## 4. Recovery Mechanism
 
-### 4.1 Jira Tools
+Khi agent cho kết quả kém, workflow tự re-route sang agent khác.
 
-Sử dụng singleton `httpx.Client` để reuse TCP connections:
+### Failure Detection (deterministic, không cần LLM)
 
 ```python
-_client: httpx.Client | None = None
-
-def _jira_client() -> httpx.Client:
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.Client(
-            base_url=settings.jira_base_url,
-            auth=(settings.jira_email, settings.jira_api_token),
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-            timeout=30.0,
-        )
-    return _client
+def _detect_failure(full_text, tool_calls, agent_key) -> bool:
+    # Response quá ngắn (<20 chars)
+    # Agent có tools nhưng không gọi tool nào (trừ triage)
+    # Tất cả tool calls đều trả error
 ```
 
-Error handling qua decorator `_safe_jira_call` — catch `ConnectError`, `HTTPStatusError` (401/403/404/429), `TimeoutException` và trả message thay vì raise.
+### Fallback Chains
 
-API endpoints:
-- Search: `GET /rest/api/3/search/jql`
-- Issue: `GET /rest/api/3/issue/{key}`
-- Sprint: `GET /rest/agile/1.0/board/{id}/sprint`
-- Sprint issues: `GET /rest/agile/1.0/sprint/{id}/issue`
-- Board: `GET /rest/agile/1.0/board`
-- Create: `POST /rest/api/3/issue`
-- Transition: `POST /rest/api/3/issue/{key}/transitions`
-- Comment: `POST /rest/api/3/issue/{key}/comment`
+```python
+_FALLBACK_CHAINS = {
+    "triage":     ["jira_query", "scrum", "sprint"],
+    "board":      ["sprint", "jira_query"],
+    "sprint":     ["scrum", "jira_query"],
+    "epic":       ["sprint", "jira_query"],
+    "scrum":      ["jira_query", "sprint"],
+    "jira_query": ["scrum", "sprint"],
+    "git":        ["jira_query"],
+}
+```
 
-### 4.2 Git Tools
+### Flow
 
-Read-only tools chạy qua `subprocess.run()` với timeout 30s. Output truncated tại 4000 chars.
+```
+Agent A chạy → _detect_failure() → True?
+  → _get_fallback(A) → Agent B
+  → Agent B chạy → return (dù tốt hay xấu)
+```
 
-Security:
-- Repo path allowlist check (`_validate_repo`)
-- Ref validation via regex (`_validate_ref`)
-- File path validation chống traversal (`_validate_path`)
-- `--` separator để ngăn argument injection
-- Private repo credentials qua environment variables (không embed trong command)
+- Max 1 retry (tổng cộng 2 agent runs)
+- Không retry `jira_write` (write ops quá rủi ro)
+- Drain tracker giữa 2 attempts
+- Chỉ cache response nếu quality OK
 
-### 4.3 Browser Tools
+---
 
-6 tools cho web scraping khi API không khả dụng. Playwright + Firefox, persistent profile.
+## 5. Orchestration Workflows
 
-- **Read**: `browser_open`, `browser_read`, `browser_screenshot`
-- **Interaction**: `browser_click`, `browser_fill`
-- **Login** (require approval): `browser_login`
+### 5.1 Interactive (Primary — Q&A)
 
-**Singleton browser context** (`pile.tools.browser_tools`):
+```
+User → smart_route() → Agent → [Recovery if fail] → Response
+```
 
-Persistent Firefox context tại `~/.pile/browser/`. Headless mặc định, headed chỉ khi `browser_login`. Session cookies tự động lưu qua restarts.
+Mỗi agent có riêng `AgentSession` để giữ conversation history.
 
-**Auto-login**: Detect login page (Atlassian ID, GitHub, GitLab) → fill credentials từ `.env` → submit. Fallback `browser_login` nếu auto-login thất bại hoặc không có credentials.
+### 5.2 Standup Pipeline (`/standup`)
 
-**Content extraction**: `page.inner_text("body")`, truncated 4000 chars. Clean text, không HTML — tối ưu cho model 9B.
+Sequential: Jira Agent → Git Agent → Scrum Agent (synthesis).
 
-### 4.4 Memory Tools
+### 5.3 Sprint Planning (`/planning`)
 
-6 tools cho memory và knowledge base management:
+GroupChat: Round-robin giữa Jira/Git/Scrum agents, max 8 turns.
 
-- **Read**: `memory_search`, `memory_list_documents`
-- **Write** (require approval): `memory_forget`, `memory_ingest_document`, `memory_remove_document`
-- **Write** (no approval): `memory_remember` — cho phép lưu nhanh không cần confirm
+### 5.4 Human-in-the-Loop
 
-Error handling qua decorator `_safe_memory_call` — catch `FileNotFoundError`, `ValueError`, và general exceptions.
+Write tools dùng `@tool(approval_mode="always_require")`. Chainlit hiển thị dialog, CLI hỏi `Approve? (y/n)`.
 
-**ChromaDB Store** (`pile.memory.store`):
+---
 
-Singleton `PersistentClient` với 2 collections:
+## 6. Tool Implementation
 
-| Collection | Mục đích | Metadata fields |
+### 6.1 Jira Tools (19 total: 11 read + 8 write)
+
+Singleton `httpx.Client`, error handling qua `@_safe_jira_call` decorator. Auto-detect `board_id` on startup.
+
+### 6.2 Git Tools (5, read-only)
+
+Subprocess với timeout 30s, output truncated 4000 chars. Input validation: repo allowlist, ref regex, path traversal check.
+
+### 6.3 Memory Tools (6)
+
+ChromaDB vector store, 2 collections (memories + documents). Document ingestion: PDF (PyMuPDF) / markdown → chunk ~500 chars → embed → store.
+
+### 6.4 Browser Tools (6)
+
+Playwright + Firefox, persistent profile at `~/.pile/browser/`. Auto-login cho Jira/GitHub/GitLab. Headless mặc định.
+
+---
+
+## 7. Health Checks
+
+Startup checks (`pile.health`), warnings không block:
+
+| Check | Condition | What |
 |---|---|---|
-| `memories` | Explicit remember/forget | `type`, `source`, `created_at` |
-| `documents` | Chunks từ ingested files | `doc_id`, `doc_name`, `chunk_index`, `page`, `source_path` |
-
-Embedding qua `OllamaEmbeddingFunction` — gọi Ollama `/api/embed` endpoint với model `nomic-embed-text`.
-
-**Document Ingestion** (`pile.memory.ingest`):
-
-1. Extract text: PyMuPDF cho PDF, built-in read cho markdown/text
-2. Chunk: ~500 chars, recursive split theo paragraph → sentence, 50-char overlap
-3. Store: mỗi chunk là 1 document trong ChromaDB `documents` collection
-
-### 4.4 Utility Functions
-
-- `extract_text(adf_node)` — parse Atlassian Document Format thành plain text
-- `make_adf(text)` — convert plain text thành ADF cho Jira API
+| LLM provider | always | Endpoint reachable + LLM model loaded |
+| Router model | if `ROUTER_MODEL` set | Router model loaded on same provider |
+| Jira | always | Auth valid |
+| Embedding model | if `MEMORY_ENABLED` | Embedding model loaded on configured provider |
+| Browser | if `BROWSER_ENABLED` | Playwright Firefox installed |
 
 ---
 
-## 5. Health Checks
+## 8. Configuration
 
-Startup health checks (`pile.health`):
+```ini
+# LLM Provider
+LLM_PROVIDER=openai                        # "ollama" | "openai" | "ollama-native"
+OPENAI_BASE_URL=http://localhost:1234/v1    # LM Studio
+OPENAI_MODEL=qwen3.5-4b-mlx                # Agent model (tool calling)
+OPENAI_API_KEY=lm-studio
 
-- **Ollama**: `GET /api/tags` → kiểm tra server reachable + LLM model available
-- **Jira**: `GET /rest/api/3/myself` → kiểm tra auth valid
-- **Embedding model**: `GET /api/tags` → kiểm tra `nomic-embed-text` available (chỉ khi `MEMORY_ENABLED=true`)
-- **Browser**: Kiểm tra Playwright Firefox browser installed (chỉ khi `BROWSER_ENABLED=true`)
+# Router Model
+ROUTER_MODEL=gemma-4-e2b-it                # Query classifier (no tool calling needed)
 
-Chạy khi khởi động cả CLI và Chainlit. Warnings hiển thị nhưng không block — cho phép partial functionality.
+# Jira
+JIRA_BASE_URL=https://instance.atlassian.net
+JIRA_EMAIL=user@email.com
+JIRA_API_TOKEN=token
+JIRA_PROJECT_KEY=PROJ
 
----
+# Agent Limits
+AGENT_MAX_ITERATIONS=5
+AGENT_MAX_FUNCTION_CALLS=15
 
-## 6. Configuration
+# Memory / RAG
+MEMORY_ENABLED=true
+EMBEDDING_MODEL_ID=text-embedding-nomic-embed-text-v1.5
 
-`pydantic-settings` + `.env` file:
-
-```python
-class Settings(BaseSettings):
-    llm_provider: str = "ollama"          # "ollama", "openai", hoặc "ollama-native"
-    ollama_host: str = "http://localhost:11434"
-    ollama_model_id: str = "qwen3.5:9b"
-    openai_base_url: str = "http://localhost:1234/v1"
-    openai_model: str = "qwen3.5:9b"
-    openai_api_key: str = "lm-studio"
-    jira_base_url: str = "https://your-instance.atlassian.net"
-    jira_email: str = ""
-    jira_api_token: str = ""
-    jira_project_key: str = ""
-    git_repos: str = ""                   # comma-separated paths
-    git_repos_json: str = ""              # JSON array with credentials
-    memory_enabled: bool = True           # enable Memory + RAG
-    memory_store_path: str = "~/.pile/chromadb"  # ChromaDB persist dir
-    embedding_model_id: str = "nomic-embed-text" # Ollama embedding model
-    browser_enabled: bool = True          # enable Browser tools
-    browser_profile_path: str = "~/.pile/browser" # Firefox persistent profile
-    browser_jira_email: str = ""          # auto-login credentials
-    browser_jira_password: str = ""
-    browser_github_username: str = ""
-    browser_github_password: str = ""
-    browser_gitlab_username: str = ""
-    browser_gitlab_password: str = ""
-    chainlit_host: str = "0.0.0.0"
-    chainlit_port: int = 8000
+# Browser
+BROWSER_ENABLED=true
 ```
 
-LLM providers:
-- `"ollama"` (default): OpenAI-compat client → Ollama `/v1/` endpoint. Tránh bug HandoffBuilder với native client.
-- `"openai"`: OpenAI-compat client cho LM Studio hoặc endpoint khác.
-- `"ollama-native"`: Native Ollama client. Single-agent only, không support workflows.
+Tất cả models (agent, router, embedding) chạy trên cùng provider endpoint.
 
 ---
 
-## 7. Project Structure
+## 9. Project Structure
 
 ```
 src/pile/
-├── __init__.py
-├── config.py           # Settings (pydantic-settings + .env)
-├── client.py           # LLM client factory
-├── health.py           # Startup health checks
+├── config.py              # Settings (pydantic-settings + .env)
+├── client.py              # LLM client factory
+├── health.py              # Startup health checks (provider-aware)
+├── router.py              # 3-phase router (keyword → LLM → embedding)
+├── middleware.py           # ToolCallTracker (timing, logging)
+├── cache.py               # Semantic cache (exact-match, 5min TTL)
 ├── agents/
-│   ├── triage.py       # Triage (router + memory handler) agent
-│   ├── jira.py         # Jira specialist agent
-│   ├── git.py          # Git specialist agent
-│   └── scrum.py        # Scrum Master agent (+ memory_search)
+│   ├── triage.py          # Memory + browser handler
+│   ├── jira_query.py      # Jira read (search, details, changelog, curl)
+│   ├── jira_write.py      # Jira write (create, update, transition, comment)
+│   ├── board.py           # Board info
+│   ├── sprint.py          # Sprint management
+│   ├── epic.py            # Epics + backlog
+│   ├── git.py             # Git specialist (optional)
+│   └── scrum.py           # Scrum Master (direct Jira + Git access)
 ├── tools/
-│   ├── jira_tools.py   # 19 Jira REST API tools (11 read + 8 write)
-│   ├── git_tools.py    # Git CLI tools + input validation
-│   ├── memory_tools.py # Memory + knowledge base tools (6 tools)
-│   ├── browser_tools.py# Browser tools (6 tools, Playwright + Firefox)
-│   └── utils.py        # ADF conversion helpers
+│   ├── jira_tools.py      # 19 Jira REST API tools
+│   ├── git_tools.py       # 5 Git CLI tools + validation
+│   ├── memory_tools.py    # 6 Memory/RAG tools
+│   ├── browser_tools.py   # 6 Browser tools (Playwright)
+│   └── utils.py           # ADF conversion
 ├── memory/
-│   ├── store.py        # ChromaDB wrapper (2 collections, singleton)
-│   └── ingest.py       # PDF/markdown extraction + text chunking
+│   ├── store.py           # ChromaDB wrapper (provider-aware embedding)
+│   └── ingest.py          # PDF/markdown → chunks
 ├── workflows/
-│   ├── interactive.py  # Handoff workflow (primary Q&A)
-│   ├── standup.py      # Sequential workflow (standup pipeline)
-│   └── planning.py     # GroupChat workflow (sprint planning)
+│   ├── interactive.py     # Routed workflow + recovery
+│   ├── standup.py         # Sequential pipeline
+│   └── planning.py        # GroupChat (sprint planning)
 └── ui/
-    ├── chainlit_app.py # Chainlit web UI
-    ├── charts.py       # Auto chart detection + Plotly builders
-    └── cli.py          # Terminal CLI
+    ├── cli.py             # Terminal CLI
+    ├── chainlit_app.py    # Web UI
+    └── charts.py          # Auto chart detection + Plotly
 ```
 
 ---
 
-## 8. Design Decisions
+## 10. Design Decisions
 
 | Quyết định | Lý do |
 |---|---|
-| Dùng OpenAI-compat client cho Ollama thay vì native client | Native `OllamaChatClient` có bug với `HandoffBuilder` (#4402) |
-| Scrum Agent có access trực tiếp Jira + Git tools | Giảm handoff overhead cho reports cần data từ nhiều nguồn |
-| Singleton httpx client cho Jira | Reuse TCP/TLS connections, giảm latency khi gọi nhiều tools liên tiếp |
-| `@property` thay vì `@cached_property` cho `git_repo_list` | Cho phép config changes trong tests và reload |
-| Prompt Scrum Agent ngắn gọn (~45 dòng) | Tiết kiệm context window cho model 9B |
-| Error handling qua decorator `_safe_jira_call` | DRY — tất cả Jira tools share cùng error handling |
-| Git tools validate input qua regex | Chống command injection qua user-controlled parameters |
-| Iterative approval loop trong Chainlit (max 20 rounds) | Tránh stack overflow từ recursive calls, hỗ trợ batch operations |
-| ChromaDB embedded thay vì client-server | Chạy in-process, không cần server riêng, phù hợp local-first |
-| `nomic-embed-text` qua Ollama thay vì sentence-transformers | Tận dụng Ollama infra sẵn có, tránh thêm ~2GB torch dependencies |
-| Tool-based retrieval thay vì ContextProvider | ContextProvider inject vào mọi call → lãng phí token cho model 9B. Tool-based = chỉ gọi khi cần |
-| Memory tools gắn vào Triage thay vì Memory Agent riêng | Giảm handoff = giảm latency, memory ops đơn giản không cần agent riêng suy nghĩ |
-| Scrum Agent có `memory_search` trực tiếp | Cho phép Scrum tự tra knowledge base khi tư vấn methodology, không cần handoff |
-| File upload bypass agent → ingest trực tiếp | Upload file qua Chainlit UI tự ingest ngay, không cần agent gọi tool — nhanh, không tốn LLM call |
-| Playwright + Firefox thay vì Browser Use/MCP | Direct Playwright sync API đơn giản, không thêm LangChain dependency, phù hợp tool pattern hiện tại |
-| Playwright chạy trong thread riêng (`ThreadPoolExecutor`) | Sync API xung đột với asyncio event loop của agent framework — chạy trong dedicated thread giải quyết |
-| Auto-login + persistent session | Login 1 lần (auto hoặc manual), persistent profile giữ cookies — không cần re-login |
-| Clean text extraction thay vì accessibility tree | `inner_text("body")` truncated 4000 chars — tiết kiệm token, đủ context cho model 9B |
-| Browser tools gắn vào Triage (interaction) + Scrum (read-only) | Triage xử lý login/click/fill, Scrum chỉ cần đọc data từ web pages |
-| Auto chart detection thay vì dedicated chart tool | Post-processing transparent, không thêm tool cho model 9B, user muốn automatic |
-| Plotly dark theme | Consistent với Chainlit dark theme default |
+| Deterministic router thay HandoffBuilder | HandoffBuilder thêm 7 transfer tools → overwhelm model 9B/4B |
+| LLM classifier (Gemma 2B) thay embedding similarity | Embedding scores quá sát nhau (~0.44-0.47), LLM hiểu ngữ nghĩa tốt hơn (89% vs 60%) |
+| Router model riêng, không dùng agent model | Gemma 2B nhanh (~500ms), không cần tool calling. Qwen 4B chuyên tool calling |
+| Recovery fallback chains | One-shot routing không perfect → cần cơ chế tự sửa khi sai |
+| Max 1 retry | Trade-off speed vs resilience — 2 agent runs là chấp nhận được |
+| Triage không có Jira tools | Giữ mỗi agent focused. Recovery sẽ chuyển sang đúng agent |
+| Scrum Agent có direct Jira/Git access | Giảm handoff cho reports cần data từ nhiều nguồn |
+| Singleton httpx client cho Jira | Reuse TCP/TLS connections |
+| Cùng 1 provider cho tất cả models | Đơn giản ops — 1 endpoint (LM Studio hoặc Ollama) |
+| Embedding giữ cho Memory/RAG, bỏ khỏi routing | Embedding tốt cho semantic search docs, kém cho classify intent |
+| Greeting patterns trong keyword router | Tránh lãng phí LLM call cho "hello", "xin chào" |
+| `@_safe_jira_call` decorator | DRY error handling cho tất cả Jira tools |
+| Git tools validate input qua regex | Chống command injection |
+| Tool-based retrieval thay ContextProvider | ContextProvider inject mọi call → lãng phí token |

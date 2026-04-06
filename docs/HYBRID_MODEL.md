@@ -1,6 +1,6 @@
-# Hybrid Model Architecture: 2 Small Models > 1 Large Model
+# Multi-Model Architecture: Right Model, Right Job
 
-> **Status**: Research / Experiment
+> **Status**: Implemented (Router + Agent) / Planned (Synthesizer)
 > **Date**: 2026-04-06
 > **Context**: Pile Scrum Master agent, 8GB RAM, Apple Silicon
 
@@ -8,130 +8,131 @@
 
 ## Ý tưởng
 
-Thay vì chạy 1 model lớn (9B-14B), phối hợp 2 model nhỏ chuyên biệt chạy song song trên cùng máy. Mỗi model phát huy thế mạnh riêng.
+Thay vì dùng 1 model cho mọi việc, phân chia 3 vai trò cho 3 model khác nhau — mỗi model chỉ làm việc nó giỏi nhất.
 
-## Tại sao?
+## Hiện tại: 3-Model Pipeline (Đã implement)
 
-- Model 9B cần ~6GB RAM → chiếm gần hết 8GB, không còn chỗ cho context dài
-- Model 4B + model 2B = ~5GB tổng → dư RAM cho context + OS
-- Mỗi model có thế mạnh khác nhau: Qwen giỏi tool calling, Gemma giỏi ngôn ngữ + multimodal
-- LM Studio trên Apple Silicon serve nhiều model cùng lúc qua unified memory
+```
+User Input
+  │
+  ├── [1] Keyword Router (regex, <1ms)
+  │     └── match → agent key (70% queries)
+  │
+  ├── [2] Gemma 4 E2B — Router Model (~500ms)
+  │     └── classify query → 1 token output (agent name)
+  │     └── không cần tool calling, chỉ follow instruction
+  │
+  ├── [3] Qwen 3.5-4B — Agent Model (~20-60s)
+  │     └── tool calling + response generation
+  │     └── 3-5 tools per agent, max 5 iterations
+  │
+  └── [4] nomic-embed-text — Embedding Model (~50ms)
+        └── memory search, document RAG
+        └── KHÔNG dùng cho routing nữa
+```
 
-## Cặp đôi đề xuất
+### Tại sao tách Router Model?
 
-| Role | Model | RAM | Thế mạnh |
+| Aspect | Embedding routing (cũ) | LLM classify (mới) |
+|--------|----------------------|-------------------|
+| Accuracy | ~60% (scores sát nhau 0.44-0.47) | ~89% (hiểu ngữ nghĩa) |
+| Latency | ~200ms | ~500ms |
+| "Khanh đang làm gì?" | → board (SAI) | → jira_query (ĐÚNG) |
+| "Tình hình thế nào?" | → triage (SAI) | → scrum (ĐÚNG) |
+
+Embedding chỉ so mặt chữ giữa query và agent description. LLM 2B hiểu context: "Khanh đang làm gì" = hỏi về tasks của 1 người = cần Jira search.
+
+### Resource Usage (8GB Mac)
+
+| Model | Role | RAM | Latency |
 |---|---|---|---|
-| **Tool Executor** | Qwen 3.5-4B | ~3GB | TAU2: 79.9 (tool calling cực tốt, hơn nhiều model 70B+) |
-| **Synthesizer** | Gemma 4 E2B | ~2GB | 128K context, multilingual, multimodal (image+audio) |
-| **Tổng** | | **~5GB** | Vừa 8GB, dư cho OS + context |
+| Gemma 4 E2B (2B) | Router classify | ~1.5GB | ~500ms |
+| Qwen 3.5-4B | Agent (tool calling) | ~3GB | 20-60s |
+| nomic-embed-text | Memory/RAG embedding | ~0.3GB | ~50ms |
+| **Tổng** | | **~5GB** | Dư cho OS + context |
 
-## Flow
+LM Studio trên Apple Silicon serve tất cả cùng lúc qua unified memory.
 
-```
-User: "Sprint hiện tại tiến độ thế nào? Phân tích chi tiết."
-  │
-  ├── [1] Keyword Router (regex, 0ms)
-  │     → "sprint" → SprintAgent
-  │
-  ├── [2] Qwen 3.5-4B (Tool Executor)
-  │     System: "You are a sprint specialist. Call tools to get data."
-  │     → jira_get_board() → raw data (board + sprint + counts)
-  │     → jira_get_sprint_issues() → raw data (issues by status)
-  │     Output: structured data / bullet points
-  │
-  └── [3] Gemma 4 E2B (Synthesizer) — optional, chỉ khi cần
-        System: "Analyze this data and write a clear Vietnamese report."
-        Input: raw data from step 2
-        Output: báo cáo đẹp, có phân tích, insights
+## Cấu hình
+
+```ini
+# .env
+LLM_PROVIDER=openai
+OPENAI_BASE_URL=http://localhost:1234/v1
+OPENAI_MODEL=qwen3.5-4b-mlx           # Agent model
+ROUTER_MODEL=gemma-4-e2b-it           # Router model (bỏ trống = dùng embedding)
+EMBEDDING_MODEL_ID=text-embedding-nomic-embed-text-v1.5
 ```
 
-## Khi nào dùng Synthesizer?
+Tất cả dùng cùng 1 provider endpoint. Chỉ khác model ID.
 
-Không phải query nào cũng cần 2 model. Criteria:
+## Recovery Mechanism
 
-| Query type | Model dùng | Lý do |
-|---|---|---|
-| "có mấy board" | Qwen only | Tool call → trả kết quả đơn giản |
-| "tạo bug: Login crash" | Qwen only | Tool call → confirm |
-| "cho tôi lệnh curl" | Qwen only | Tool call → trả string |
-| "phân tích sprint chi tiết" | Qwen + Gemma | Cần data (Qwen) + phân tích sâu (Gemma) |
-| "tổng hợp standup cho team" | Qwen + Gemma | Multi-tool data + synthesis |
-| "đọc screenshot Jira board" | Gemma only | Multimodal (image input) |
+Khi router classify sai hoặc agent cho kết quả kém:
 
-## Ưu điểm
+```
+Agent A fail → _detect_failure() → fallback chain → Agent B retry
+```
 
-1. **Tổng RAM thấp (~5GB)** — chạy thoải mái trên 8GB machine
-2. **Mỗi model chỉ làm việc nó giỏi** — Qwen không cần viết báo cáo dài, Gemma không cần gọi tool
-3. **Parallel loading** — LM Studio Apple Silicon serve song song, không cần swap
-4. **Fallback graceful** — nếu Gemma down, Qwen vẫn trả kết quả (chỉ kém đẹp)
-5. **Upgradable** — thay Gemma E2B bằng E4B khi có thêm RAM, không đổi architecture
+Failure signals (deterministic, không cần LLM):
+- Response < 20 chars
+- Agent có tools nhưng không gọi tool nào
+- Tất cả tool calls trả error
 
-## Nhược điểm
-
-1. **2 LLM calls** — chậm hơn 1 call (nhưng mỗi call nhỏ → nhanh hơn 1 call lớn)
-2. **Phức tạp hơn** — cần logic quyết định khi nào cần synthesizer
-3. **Context transfer** — phải pass data từ model 1 sang model 2
-4. **Gemma 4 E2B tool calling kém** (TAU2: 24.5) — đừng bao giờ cho nó gọi tool
+Max 1 retry. Không retry write operations.
 
 ## Benchmark tham khảo
 
 ### Tool Calling (TAU2-Bench)
 
-| Model | TAU2 Score | Vai trò trong hybrid |
+| Model | TAU2 Score | Vai trò |
 |---|---|---|
-| Qwen 3.5-4B | **79.9** | Tool executor |
-| Qwen 3.5-2B | 48.8 | Backup executor (nếu cần tiết kiệm hơn) |
+| Qwen 3.5-4B | **79.9** | Agent (tool executor) — giỏi nhất trong tầm giá |
+| Qwen 3.5-2B | 48.8 | Backup agent nếu cần tiết kiệm |
 | Gemma 4 E4B | 42.2 | KHÔNG dùng cho tool calling |
-| Gemma 4 E2B | 24.5 | KHÔNG dùng cho tool calling |
+| Gemma 4 E2B | 24.5 | KHÔNG dùng cho tool calling — chỉ classify/synthesize |
 
-### General (khi không cần tool)
+### Router Accuracy (18 test queries)
 
-| Model | Multilingual | Context | Multimodal | Vai trò |
-|---|---|---|---|---|
-| Gemma 4 E2B | Tốt | 128K | Image+Video+Audio | Synthesizer, tóm tắt, phân tích |
-| Qwen 3.5-4B | Tốt | 32K | Không | Tool executor |
+| Method | Accuracy | Avg latency |
+|---|---|---|
+| Keyword only | 70% (miss ambiguous) | <1ms |
+| Keyword + Embedding | 60% (scores quá sát) | ~200ms |
+| Keyword + Gemma 2B | **89%** | ~500ms |
 
-## Implementation sketch
+## Planned: Synthesizer Layer (chưa implement)
 
-```python
-# config.py
-tool_model: str = "qwen3.5-4b-mlx"        # Fast tool calling
-synthesis_model: str = "gemma-4-e4b-it"     # Rich text synthesis (optional)
-synthesis_enabled: bool = True               # Disable to use tool_model for everything
+Thêm step cuối: nếu agent response cần phân tích sâu, pass qua synthesizer model.
 
-# workflow
-async def run_with_synthesis(query, agent, tools_result):
-    """Optional: pass tool results through synthesis model for richer output."""
-    if not settings.synthesis_enabled:
-        return tools_result
-
-    # Only synthesize for complex queries (reports, analysis)
-    if len(tools_result) < 200:
-        return tools_result  # Simple results don't need synthesis
-
-    synthesis_client = create_client(model=settings.synthesis_model)
-    response = await synthesis_client.run(
-        f"Analyze this data and write a clear report:\n\n{tools_result}",
-    )
-    return response.text
+```
+Agent (Qwen 4B)  →  raw tool data  →  Synthesizer (Gemma 2B/4B)  →  báo cáo đẹp
 ```
 
-## Mở rộng: 3 model combo (16GB RAM)
+Khi nào cần synthesizer:
+- **Không cần**: "có mấy board", "tạo bug", "curl command" → Qwen trả trực tiếp
+- **Cần**: "phân tích sprint chi tiết", "standup cho team" → data cần tổng hợp
 
-Nếu có 16GB:
+Criteria: response > 200 chars + query chứa keyword phân tích/tổng hợp/báo cáo.
+
+## Mở rộng: 16GB RAM
 
 | Role | Model | RAM |
 |---|---|---|
-| **Router** | Qwen 3.5-0.8B | ~1GB |
-| **Tool Executor** | Qwen 3.5-9B | ~6GB |
-| **Synthesizer** | Gemma 4 E4B | ~5GB |
-| **Embedding** | nomic-embed-text | ~0.3GB |
-| **Tổng** | | ~12.3GB |
+| Router | Gemma 4 E2B | ~1.5GB |
+| Agent | Qwen 3.5-9B | ~6GB |
+| Synthesizer | Gemma 4 E4B | ~4GB |
+| Embedding | nomic-embed-text | ~0.3GB |
+| **Tổng** | | **~12GB** |
 
-Router 0.8B phân loại intent → Executor 9B gọi tool chính xác → Synthesizer E4B viết báo cáo đẹp. Tối ưu nhất cho cả speed và quality.
+9B agent cho tool calling chính xác hơn, E4B synthesizer cho output quality cao hơn.
 
 ## Kết luận
 
-Hybrid model là hướng đi thực tế cho edge deployment. Thay vì chạy đua parameter count, phối hợp đúng model đúng việc. Qwen cho structured tasks, Gemma cho creative/analytical tasks. Cả hai chạy song song trên cùng Apple Silicon unified memory.
+Multi-model là hướng đi thực tế cho edge deployment:
 
-**Next step**: Test Qwen 3.5-4B single model trước → nếu output quality cần cải thiện → thêm Gemma synthesizer layer.
+1. **Router model** (2B) — phân loại nhanh, không cần tool calling
+2. **Agent model** (4B) — tool calling chuyên sâu, accuracy cao
+3. **Embedding model** — memory/RAG, không dùng cho routing
+4. **Synthesizer** (planned) — optional, chỉ khi cần báo cáo đẹp
+
+Mỗi model chạy đúng việc nó giỏi. Tổng RAM ~5GB, vừa 8GB machine.
