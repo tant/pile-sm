@@ -15,7 +15,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -24,6 +23,8 @@ from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from pile.router import route_query  # noqa: E402
 
 RESULTS_DIR = Path(__file__).parent / "results"
 QUESTIONS_FILE = Path(__file__).parent / "questions.json"
@@ -57,15 +58,14 @@ async def run_single_query(
     workflow, tracker, question: dict, timeout: float
 ) -> TestResult:
     """Run a single question through the workflow, capture output + timing."""
-    from pile.router import smart_route
-    from pile.cache import clear_cache, get_cached
+    from pile.cache import get_cached
 
     qid = question["id"]
     query = question["q"]
     expected = question["route"]
 
-    # Determine route (for comparison)
-    actual_route = smart_route(query)
+    # Determine route (for comparison) — keyword only, avoid duplicate LLM call
+    actual_route = route_query(query) or "llm"
 
     # Check if cached
     cached_hit = get_cached(query) is not None
@@ -317,7 +317,7 @@ async def main():
 
     print("\n" + "=" * 70)
     write_summary(results, summary_file, total_elapsed)
-    print(f"\nFiles saved:")
+    print("\nFiles saved:")
     print(f"  JSONL:   {jsonl_file}")
     print(f"  Summary: {summary_file}")
     print(f"  Log:     {log_file}")
