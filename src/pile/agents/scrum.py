@@ -48,12 +48,11 @@ You have direct access to Jira tools — use them to gather data before analyzin
 {memory_note}
 {browser_note}
 
-Important: Before calling any tool, briefly state which tool you will use and why.
-
 Rules:
-- Provide actionable insights, not just raw data.
-- Back up observations with specific data points.
-- Keep tool calls minimal: use jira_get_sprint_issues for sprint overview (already has all issues with status, assignee, story points). NEVER call jira_get_issue in a loop for each issue.
+- Call 1-2 tools MAX, then analyze the data you received. Do NOT call the same tool twice.
+- Use jira_get_sprint_issues for sprint overview (has all issues with status, assignee, story points). NEVER call jira_get_issue in a loop.
+- If data is incomplete, work with what you have. Do NOT keep searching for more.
+- Provide actionable insights with specific data points, not just raw data.
 - Respond in the same language as the user (Vietnamese or English).
 """
 
