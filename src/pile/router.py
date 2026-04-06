@@ -47,7 +47,21 @@ _ROUTES: list[tuple[str, list[str]]] = [
         r"\bboard\b", r"li[eệ]t\s+k[eê]\s+.*board",
         r"board\s+config", r"c[aấ]u\s+h[iì]nh\s+board",
     ]),
-    # Sprint
+    # Scrum (analysis/reports — BEFORE sprint to catch "tóm tắt sprint", "báo cáo sprint")
+    ("scrum", [
+        r"standup\b", r"velocity\b", r"workload\b",
+        r"burndown\b", r"cycle\s+time", r"retro",
+        r"sprint\s+review", r"sprint\s+planning",
+        r"\bblock\b", r"blocke[rd]", r"b[iị]\s+block",
+        r"qu[aá]\s+t[aả]i", r"overload",
+        r"data\s+quality", r"thi[eế]u\s+th[oô]ng\s+tin",
+        r"t[oổ]ng\s+h[oợ]p", r"b[aá]o\s+c[aá]o",
+        r"t[oó]m\s+t[aắ]t", r"summary\b",
+        r"stakeholder", r"meeting\s+prep",
+        r"cho\s+s[eế]p", r"ph[aâ]n\s+t[ií]ch",
+        r"ti[eế]n\s+đ[oộ]", r"progress\b",
+    ]),
+    # Sprint (management — create, move, view sprint data)
     ("sprint", [
         r"\bsprint\b", r"t[aạ]o\s+sprint",
         r"chuy[eể]n.*v[aà]o\s+sprint", r"move.*sprint",
@@ -61,16 +75,6 @@ _ROUTES: list[tuple[str, list[str]]] = [
     ("git", [
         r"\bgit\b", r"\bcommit\b", r"\bbranch\b",
         r"\bdiff\b", r"\bblame\b", r"code\s+change",
-    ]),
-    # Scrum (broad patterns, lower priority)
-    ("scrum", [
-        r"standup\b", r"velocity\b", r"workload\b",
-        r"burndown\b", r"cycle\s+time", r"retro",
-        r"sprint\s+review", r"sprint\s+planning",
-        r"blocke[rd]", r"qu[aá]\s+t[aả]i",
-        r"data\s+quality", r"thi[eế]u\s+th[oô]ng\s+tin",
-        r"t[oổ]ng\s+h[oợ]p", r"b[aá]o\s+c[aá]o",
-        r"stakeholder", r"meeting\s+prep",
     ]),
     # Jira query (broadest, lowest priority)
     ("jira_query", [
