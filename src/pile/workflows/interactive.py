@@ -3,6 +3,9 @@
 Replaces HandoffBuilder (which added 7 transfer tools to Triage, overwhelming
 the 9B model) with keyword-based routing. Each agent runs independently with
 only its own 3-5 tools visible.
+
+Recovery: if the first agent produces a poor result (empty, no tool calls,
+all errors), the workflow re-routes to a fallback agent automatically.
 """
 
 from __future__ import annotations
@@ -18,11 +21,67 @@ from pile.agents.scrum import create_scrum_agent
 from pile.agents.sprint import create_sprint_agent
 from pile.agents.triage import create_triage_agent
 from pile.client import create_client
-from pile.middleware import ToolCallTracker
+from pile.middleware import ToolCallTracker, ToolCallRecord
 from pile.cache import get_cached, set_cached
 from pile.router import smart_route
 
 logger = logging.getLogger("pile.workflow")
+
+# --- Recovery: fallback chains and failure detection ---
+
+# When agent A fails, try the first available fallback in order.
+_FALLBACK_CHAINS: dict[str, list[str]] = {
+    "triage": ["jira_query", "scrum", "sprint"],
+    "board": ["sprint", "jira_query"],
+    "sprint": ["scrum", "jira_query"],
+    "epic": ["sprint", "jira_query"],
+    "scrum": ["jira_query", "sprint"],
+    "jira_query": ["scrum", "sprint"],
+    "git": ["jira_query"],
+}
+
+# Never retry write operations — too risky.
+_NO_RETRY = {"jira_write"}
+
+
+def _is_error_result(result: str | None) -> bool:
+    """Check if a tool call result looks like an error."""
+    if not result:
+        return False
+    r = result.lower()
+    return any(s in r for s in ("error", "404", "400", "401", "403", "timeout", "not found", "failed"))
+
+
+def _detect_failure(full_text: str, tool_calls: list[ToolCallRecord], agent_key: str) -> bool:
+    """Detect if an agent run produced a poor result that warrants re-routing."""
+    text = (full_text or "").strip()
+
+    # Empty or trivially short response — something went wrong.
+    if len(text) < 20:
+        return True
+
+    # Agent has tools but made zero calls — it didn't know what to do.
+    # Exception: triage can legitimately answer greetings without tools.
+    if not tool_calls and agent_key != "triage":
+        return True
+
+    # All tool calls returned errors — wrong agent for this query.
+    if tool_calls and all(_is_error_result(c.result) for c in tool_calls):
+        return True
+
+    return False
+
+
+def _get_fallback(agent_key: str, available_agents: set[str]) -> str | None:
+    """Get the first available fallback agent for a failed agent."""
+    chain = _FALLBACK_CHAINS.get(agent_key, [])
+    for candidate in chain:
+        if candidate in available_agents and candidate != agent_key:
+            return candidate
+    return None
+
+
+# --- Workflow setup ---
 
 
 def _detect_board_id():
@@ -81,11 +140,11 @@ def create_workflow():
 
 
 class RoutedWorkflow:
-    """Simple workflow: deterministic route → run single agent → return.
+    """Deterministic route → run agent → recovery if needed → return.
 
-    No HandoffBuilder, no transfer tools. Each agent only sees its own tools.
-    For ambiguous queries, falls back to Triage agent (memory/browser ops).
-    Each agent has its own session for conversation history.
+    Each agent only sees its own tools. If an agent produces a poor result
+    (empty, no tool calls, all errors), the workflow re-routes to a fallback
+    agent from _FALLBACK_CHAINS. Max 1 retry to keep things fast.
     """
 
     def __init__(self, agents: dict, tracker: ToolCallTracker, client):
@@ -93,7 +152,7 @@ class RoutedWorkflow:
         self.tracker = tracker
         self.client = client
         self._is_running = False
-        self._sessions: dict[str, "AgentSession"] = {}
+        self._sessions: dict = {}
 
     def _get_session(self, agent_key: str):
         """Get or create a session for an agent (keeps conversation history)."""
@@ -109,14 +168,40 @@ class RoutedWorkflow:
             include_status_events=False, **kwargs):
         """Run the workflow — route query to agent, execute, return stream."""
         if responses is not None:
-            # Handle pending responses (approval, follow-up)
             return self._run_with_responses(responses, stream=stream)
         return self._run_query(message, stream=stream)
 
+    async def _execute_agent(self, agent_key: str, message: str, stream: bool):
+        """Run a single agent and collect output text + tool calls.
+
+        Returns (full_text, tool_calls). Does NOT yield workflow events —
+        the caller decides what to emit.
+        """
+        agent = self.agents.get(agent_key, self.agents["triage"])
+        session = self._get_session(agent_key)
+
+        # Drain any leftover tool calls from previous runs.
+        self.tracker.drain()
+
+        full_text = ""
+        if stream:
+            result_stream = agent.run(message, stream=True, session=session)
+            async for update in result_stream:
+                if update.text:
+                    full_text += update.text
+            await result_stream.get_final_response()
+        else:
+            response = await agent.run(message, session=session)
+            if response.text:
+                full_text = response.text
+
+        tool_calls = self.tracker.drain()
+        return full_text, tool_calls
+
     async def _run_query(self, message: str, stream: bool = False):
-        """Route and execute a user query."""
+        """Route and execute a user query, with recovery on failure."""
         from agent_framework._workflows._events import WorkflowEvent
-        from agent_framework._types import AgentResponseUpdate
+        from agent_framework._types import AgentResponseUpdate, Content
 
         self._is_running = True
         try:
@@ -131,46 +216,59 @@ class RoutedWorkflow:
                 yield WorkflowEvent.executor_completed(cached_agent)
                 return
 
-            # Route to agent
+            # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
-            session = self._get_session(agent_key or "triage")
             logger.info("Route: '%s' → %s", message[:50], agent.name)
-
-            # Emit executor_invoked
             yield WorkflowEvent.executor_invoked(agent.name)
 
-            # Run the agent with session (keeps conversation history)
-            full_text = ""
-            if stream:
-                result_stream = agent.run(message, stream=True, session=session)
-                async for update in result_stream:
-                    if update.text:
-                        full_text += update.text
-                        yield WorkflowEvent.output(agent.name, update)
-                response = await result_stream.get_final_response()
-            else:
-                response = await agent.run(message, session=session)
-                if response.text:
-                    full_text = response.text
-                    yield WorkflowEvent.output(agent.name, response)
+            full_text, tool_calls = await self._execute_agent(agent_key, message, stream=False)
 
-            # Cache read-only responses
+            # --- Recovery check ---
+            should_retry = (
+                agent_key not in _NO_RETRY
+                and _detect_failure(full_text, tool_calls, agent_key)
+            )
+
+            if should_retry:
+                fallback_key = _get_fallback(agent_key, set(self.agents.keys()))
+                if fallback_key:
+                    logger.info(
+                        "Recovery: %s failed (text=%d, tools=%d), retrying → %s",
+                        agent_key, len(full_text), len(tool_calls), fallback_key,
+                    )
+                    yield WorkflowEvent.executor_completed(agent.name)
+
+                    # --- Fallback attempt ---
+                    fallback_agent = self.agents[fallback_key]
+                    yield WorkflowEvent.executor_invoked(fallback_agent.name)
+
+                    full_text, tool_calls = await self._execute_agent(
+                        fallback_key, message, stream=False,
+                    )
+                    agent_key = fallback_key
+                    agent = fallback_agent
+
+            # Emit final output
+            if full_text:
+                yield WorkflowEvent.output(agent.name, AgentResponseUpdate(contents=[Content(type="text", text=full_text)]))
+
+            # Cache read-only responses (only if quality is OK)
             if full_text and agent_key not in ("jira_write", "memory", "browser"):
-                set_cached(message, full_text, agent.name)
+                if not _detect_failure(full_text, tool_calls, agent_key):
+                    set_cached(message, full_text, agent.name)
 
-            # Emit executor_completed
             yield WorkflowEvent.executor_completed(agent.name)
 
         except Exception as e:
             logger.exception("Workflow error: %s", e)
-            yield WorkflowEvent.executor_failed(agent.name if 'agent' in dir() else "unknown", str(e))
+            yield WorkflowEvent.executor_failed(
+                agent.name if "agent" in dir() else "unknown", str(e),
+            )
         finally:
             self._is_running = False
 
     async def _run_with_responses(self, responses: dict, stream: bool = False):
         """Handle approval/follow-up responses — not used in simple routing."""
-        from agent_framework._workflows._events import WorkflowEvent
-
         # For now, yield nothing — approval handling stays in chainlit_app
         return
         yield  # Make this an async generator

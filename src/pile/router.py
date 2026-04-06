@@ -28,6 +28,10 @@ _ROUTES: list[tuple[str, list[str]]] = [
         r"vnexpress|github\.com|gitlab\.com|atlassian",
         r"https?://",
     ]),
+    # Issue key (TETRA-123, PROJ-42, etc.) — almost always a Jira query
+    ("jira_query", [
+        r"[A-Z]+-\d+",
+    ]),
     # Curl/command generation
     ("jira_query", [
         r"cho\s+t[oô]i\s+l[eệ]nh", r"curl\b", r"l[eệ]nh\s+l[aấ]y",
