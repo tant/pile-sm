@@ -24,6 +24,7 @@ from pile.client import create_client
 from pile.middleware import ToolCallTracker, ToolCallRecord
 from pile.cache import get_cached, set_cached
 from pile.router import smart_route
+from pile.prefetch import prefetch_scrum_data
 
 logger = logging.getLogger("pile.workflow")
 
@@ -52,7 +53,10 @@ def _is_error_result(result: str | None) -> bool:
     return any(s in r for s in ("error", "404", "400", "401", "403", "timeout", "not found", "failed"))
 
 
-def _detect_failure(full_text: str, tool_calls: list[ToolCallRecord], agent_key: str) -> bool:
+def _detect_failure(
+    full_text: str, tool_calls: list[ToolCallRecord], agent_key: str,
+    has_prefetch: bool = False,
+) -> bool:
     """Detect if an agent run produced a poor result that warrants re-routing."""
     text = (full_text or "").strip()
 
@@ -61,8 +65,8 @@ def _detect_failure(full_text: str, tool_calls: list[ToolCallRecord], agent_key:
         return True
 
     # Agent has tools but made zero calls — it didn't know what to do.
-    # Exception: triage can legitimately answer greetings without tools.
-    if not tool_calls and agent_key != "triage":
+    # Exceptions: triage (greetings), scrum with prefetch (data in prompt, no tools needed).
+    if not tool_calls and agent_key != "triage" and not has_prefetch:
         return True
 
     # All tool calls returned errors — wrong agent for this query.
@@ -135,7 +139,7 @@ def create_workflow():
     if git:
         agents["git"] = git
 
-    workflow = RoutedWorkflow(agents, tracker, client)
+    workflow = RoutedWorkflow(agents, tracker, client, board_id=board_id)
     return workflow, tracker
 
 
@@ -147,10 +151,11 @@ class RoutedWorkflow:
     agent from _FALLBACK_CHAINS. Max 1 retry to keep things fast.
     """
 
-    def __init__(self, agents: dict, tracker: ToolCallTracker, client):
+    def __init__(self, agents: dict, tracker: ToolCallTracker, client, board_id: int = 0):
         self.agents = agents
         self.tracker = tracker
         self.client = client
+        self.board_id = board_id
         self._is_running = False
         self._sessions: dict = {}
         self.last_agent_key: str = ""
@@ -217,6 +222,20 @@ class RoutedWorkflow:
                 yield WorkflowEvent.executor_completed(cached_agent)
                 return
 
+            # --- Prefetch data for scrum queries ---
+            has_prefetch = False
+            if agent_key == "scrum" and self.board_id:
+                data = prefetch_scrum_data(message, self.board_id)
+                if data:
+                    has_prefetch = True
+                    scrum_agent = create_scrum_agent(
+                        self.client,
+                        middleware=[self.tracker],
+                        prefetch_data=data,
+                    )
+                    self.agents["scrum"] = scrum_agent
+                    self._sessions.pop("scrum", None)
+
             # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
             self.last_agent_key = agent_key
@@ -228,7 +247,7 @@ class RoutedWorkflow:
             # --- Recovery check ---
             should_retry = (
                 agent_key not in _NO_RETRY
-                and _detect_failure(full_text, tool_calls, agent_key)
+                and _detect_failure(full_text, tool_calls, agent_key, has_prefetch)
             )
 
             if should_retry:
@@ -256,7 +275,7 @@ class RoutedWorkflow:
 
             # Cache read-only responses (only if quality is OK)
             if full_text and agent_key not in ("jira_write", "memory", "browser"):
-                if not _detect_failure(full_text, tool_calls, agent_key):
+                if not _detect_failure(full_text, tool_calls, agent_key, has_prefetch):
                     set_cached(message, full_text, agent.name)
 
             yield WorkflowEvent.executor_completed(agent.name)

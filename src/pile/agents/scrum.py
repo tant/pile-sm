@@ -1,104 +1,95 @@
-"""Scrum Agent — Scrum Master assistant with direct access to Jira + Git tools."""
+"""Scrum Agent — Scrum Master assistant with prefetched Jira data + optional deep-dive tools."""
 
 from __future__ import annotations
 
 from pile.config import settings
 from pile.tools.jira_tools import (
-    jira_get_board,
     jira_get_changelog,
-    jira_get_issue,
-    jira_get_sprint_issues,
     jira_search,
 )
 
 SCRUM_INSTRUCTIONS = """\
-You are an experienced Scrum Master assistant for project {project_key}.
+You are an experienced Scrum Master for project {project_key}. Analyze the data below and respond with actionable insights.
 
-Think step by step for every task:
-1. Identify the user's request
-2. Gather data using tools (Jira search, sprint info, git log)
-3. Analyze and present actionable insights with specific data points
+{prefetch_data}
 
-You handle these areas — pick the relevant approach based on the user's request:
-
-**STANDUP**: Search issues updated today/yesterday + git commits → group by member → done / next / blockers.
-
-**SPRINT REVIEW**: Get board → sprint → sprint issues → count done vs in-progress vs to-do → completion rate → risks (overdue, unassigned, blocked).
-
-**DATA QUALITY AUDIT**: Search sprint/backlog issues → check each for missing fields (description, story points, assignee, priority) → group by severity → suggest fixes.
-
-**TIMELINE & DELAYS**: Get sprint dates + issues → compare %time elapsed vs %work done → flag overdue items, stuck issues (same status >3 days), bottlenecks → ON TRACK / AT RISK / BEHIND.
-
-**BLOCKERS**: Search blocked/flagged issues → how long blocked, what's blocking → prioritize by impact → suggest escalation or reassignment.
-
-**WORKLOAD BALANCE**: Count issues + story points per assignee → flag overloaded (>150% avg) or idle (<50% avg) → suggest redistribution. Flag WIP violations (>3 in-progress per person).
-
-**CYCLE TIME**: Analyze recently completed issues → time per status stage → identify slowest stage → trend analysis.
-
-**SPRINT GOAL**: Compare goal-related vs side-work completion → alert if goal items lag behind.
-
-**DEPENDENCIES**: Check issue links (blocks/is blocked by) → build dependency chain → flag critical path.
-
-**STAKEHOLDER SUMMARY**: Sprint progress, risks, blockers, decisions needed → 5-7 bullet executive summary.
-
-**MEETING PREP**: Planning: backlog + capacity. Review: completed + demos. Retro: metrics + stuck issues.
-
-You have direct access to Jira tools — use them to gather data before analyzing.
+Rules:
+- Analyze the data above. Do NOT say you need more data — work with what you have.
+- Include specific numbers, percentages, and issue keys in your analysis.
+- Respond in the same language as the user (Vietnamese or English).
 {git_note}
 {memory_note}
-{browser_note}
+"""
+
+SCRUM_INSTRUCTIONS_NO_DATA = """\
+You are an experienced Scrum Master assistant for project {project_key}.
+
+Use the available tools to gather data, then analyze and present insights.
 
 Rules:
 - Call 1-2 tools MAX, then analyze the data you received. Do NOT call the same tool twice.
-- Use jira_get_sprint_issues for sprint overview (has all issues with status, assignee, story points). NEVER call jira_get_issue in a loop.
-- If data is incomplete, work with what you have. Do NOT keep searching for more.
-- Provide actionable insights with specific data points, not just raw data.
+- Provide actionable insights with specific data points.
 - Respond in the same language as the user (Vietnamese or English).
+{git_note}
+{memory_note}
 """
 
 
-def create_scrum_agent(client, middleware=None):
-    """Create the Scrum Agent with Jira + optional Git + optional Memory tools."""
-    tools = [jira_search, jira_get_issue, jira_get_board, jira_get_sprint_issues, jira_get_changelog]
+def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
+    """Create the Scrum Agent.
 
+    If prefetch_data is provided, the agent receives data in its instructions
+    and only has deep-dive tools (changelog, search). This prevents tool loops.
+    If no prefetch_data, falls back to full tool set.
+    """
     git_note = "Git is not configured — skip git-related analysis."
+    memory_note = ""
+
+    git_tools = []
     if settings.git_repo_list:
         from pile.tools.git_tools import git_diff, git_log
-        tools.extend([git_log, git_diff])
+        git_tools = [git_log, git_diff]
         git_note = (
-            "You also have access to Git tools for commit history and code changes.\n"
-            f"Available repos: {', '.join(r.path for r in settings.git_repo_list)}"
+            "You also have git_log and git_diff for commit history.\n"
+            f"Repos: {', '.join(r.path for r in settings.git_repo_list)}"
         )
 
-    memory_note = ""
+    memory_tools = []
     if settings.memory_enabled:
         from pile.tools.memory_tools import memory_search
-        tools.append(memory_search)
-        memory_note = (
-            "You have access to memory_search — use it to look up past decisions, "
-            "team patterns, or knowledge base content (e.g. Agile methodology documents) "
-            "when it would help your analysis or recommendations."
-        )
+        memory_tools = [memory_search]
+        memory_note = "You have memory_search for past decisions and knowledge base."
 
-    browser_note = ""
-    if settings.browser_enabled:
-        from pile.tools.browser_tools import browser_open, browser_read
-        tools.extend([browser_open, browser_read])
-        browser_note = (
-            "You have browser_open and browser_read tools to scrape web pages when API data "
-            "is insufficient. Use these to collect data from Jira board views, GitHub PRs, etc. "
-            "The browser has saved login sessions."
+    if prefetch_data:
+        # Prefetch mode: data injected, minimal tools for deep-dive only
+        tools = git_tools + memory_tools
+        instructions = SCRUM_INSTRUCTIONS.format(
+            project_key=settings.jira_project_key,
+            prefetch_data=prefetch_data,
+            git_note=git_note,
+            memory_note=memory_note,
+        )
+    else:
+        # Fallback: full tools (for when prefetch is not possible)
+        from pile.tools.jira_tools import (
+            jira_get_board,
+            jira_get_issue,
+            jira_get_sprint_issues,
+        )
+        tools = [
+            jira_search, jira_get_issue, jira_get_board,
+            jira_get_sprint_issues, jira_get_changelog,
+        ] + git_tools + memory_tools
+        instructions = SCRUM_INSTRUCTIONS_NO_DATA.format(
+            project_key=settings.jira_project_key,
+            git_note=git_note,
+            memory_note=memory_note,
         )
 
     return client.as_agent(
         name="ScrumAgent",
         description="Scrum Master: standup, planning, retro, coaching, reports, data quality, timeline tracking",
-        instructions=SCRUM_INSTRUCTIONS.format(
-            project_key=settings.jira_project_key,
-            git_note=git_note,
-            memory_note=memory_note,
-            browser_note=browser_note,
-        ),
+        instructions=instructions,
         tools=tools,
         middleware=middleware,
     )
