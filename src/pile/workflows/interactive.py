@@ -85,6 +85,7 @@ class RoutedWorkflow:
 
     No HandoffBuilder, no transfer tools. Each agent only sees its own tools.
     For ambiguous queries, falls back to Triage agent (memory/browser ops).
+    Each agent has its own session for conversation history.
     """
 
     def __init__(self, agents: dict, tracker: ToolCallTracker, client):
@@ -92,6 +93,14 @@ class RoutedWorkflow:
         self.tracker = tracker
         self.client = client
         self._is_running = False
+        self._sessions: dict[str, "AgentSession"] = {}
+
+    def _get_session(self, agent_key: str):
+        """Get or create a session for an agent (keeps conversation history)."""
+        from agent_framework import AgentSession
+        if agent_key not in self._sessions:
+            self._sessions[agent_key] = AgentSession()
+        return self._sessions[agent_key]
 
     def _reset_running_flag(self):
         self._is_running = False
@@ -124,22 +133,23 @@ class RoutedWorkflow:
 
             # Route to agent
             agent = self.agents.get(agent_key, self.agents["triage"])
+            session = self._get_session(agent_key or "triage")
             logger.info("Route: '%s' → %s", message[:50], agent.name)
 
             # Emit executor_invoked
             yield WorkflowEvent.executor_invoked(agent.name)
 
-            # Run the agent
+            # Run the agent with session (keeps conversation history)
             full_text = ""
             if stream:
-                result_stream = agent.run(message, stream=True)
+                result_stream = agent.run(message, stream=True, session=session)
                 async for update in result_stream:
                     if update.text:
                         full_text += update.text
                         yield WorkflowEvent.output(agent.name, update)
                 response = await result_stream.get_final_response()
             else:
-                response = await agent.run(message)
+                response = await agent.run(message, session=session)
                 if response.text:
                     full_text = response.text
                     yield WorkflowEvent.output(agent.name, response)
