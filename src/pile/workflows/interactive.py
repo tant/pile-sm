@@ -153,6 +153,7 @@ class RoutedWorkflow:
         self.client = client
         self._is_running = False
         self._sessions: dict = {}
+        self.last_agent_key: str = ""
 
     def _get_session(self, agent_key: str):
         """Get or create a session for an agent (keeps conversation history)."""
@@ -218,6 +219,7 @@ class RoutedWorkflow:
 
             # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
+            self.last_agent_key = agent_key
             logger.info("Route: '%s' → %s", message[:50], agent.name)
             yield WorkflowEvent.executor_invoked(agent.name)
 

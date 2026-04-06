@@ -69,7 +69,6 @@ async def run_single_query(
     full_text = ""
     status = "ok"
     error_msg = ""
-    actual_route = ""
     start_time = time.monotonic()
 
     try:
@@ -78,11 +77,6 @@ async def run_single_query(
                 if event.type == "output":
                     if hasattr(event.data, "text") and event.data.text:
                         full_text += event.data.text
-                elif event.type == "executor_invoked":
-                    # Capture the first agent name as actual route
-                    if not actual_route:
-                        name = event.data if isinstance(event.data, str) else str(event.data)
-                        actual_route = name.replace("Agent", "").lower().strip()
     except TimeoutError:
         status = "timeout"
         error_msg = f"Timed out after {timeout}s"
@@ -99,13 +93,8 @@ async def run_single_query(
     if status == "ok" and not full_text.strip():
         status = "empty"
 
-    # Map agent names back to route keys for comparison
-    _NAME_TO_KEY = {
-        "triage": "triage", "jiraquery": "jira_query", "jirawrite": "jira_write",
-        "board": "board", "sprint": "sprint", "epic": "epic",
-        "scrum": "scrum", "git": "git",
-    }
-    route_key = _NAME_TO_KEY.get(actual_route, actual_route)
+    # Get actual route from workflow
+    route_key = getattr(workflow, "last_agent_key", "") or "unknown"
 
     # Collect tool calls — get from tracker (what hasn't been drained by workflow)
     calls = tracker.drain()
