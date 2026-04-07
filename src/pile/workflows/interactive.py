@@ -250,7 +250,7 @@ class RoutedWorkflow:
             # --- First attempt ---
             agent = self.agents.get(agent_key, self.agents["triage"])
             agent_name = agent.name
-            self.last_agent_key = agent_key
+            self.last_agent_key = agent_key.replace("_scrum_prefetch", "scrum")
             logger.info("Route: '%s' → %s", message[:50], agent_name)
             yield WorkflowEvent.executor_invoked(agent_name)
 
