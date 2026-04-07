@@ -95,6 +95,60 @@ def chat_completion(
     return result
 
 
+def chat_completion_stream(
+    messages: list[dict[str, Any]],
+    tools: list[dict] | None = None,
+    max_tokens: int = 2048,
+    temperature: float = 0.7,
+):
+    """Run streaming chat completion. Returns a generator of chunk dicts.
+
+    llama-cpp-python's stream=True returns a sync generator. This function
+    wraps it with logging, matching chat_completion's interface.
+    """
+    model = _get_agent_model()
+    messages = _inject_no_think(messages)
+    start = time.monotonic()
+
+    tool_names = None
+    if tools:
+        tool_names = [
+            t["function"]["name"] if isinstance(t, dict) else getattr(t, "name", str(t))
+            for t in tools
+        ]
+
+    log_inference_detail(
+        role="agent",
+        direction="request",
+        content=json.dumps(
+            {"messages": messages, "tools": tool_names, "stream": True},
+            ensure_ascii=False, indent=2,
+        ),
+    )
+
+    kwargs: dict[str, Any] = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+
+    stream = model.create_chat_completion(**kwargs)
+
+    for chunk in stream:
+        yield chunk
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+    log_inference_call(
+        role="agent",
+        latency_ms=latency_ms,
+        status="ok",
+    )
+
+
 def router_completion(prompt: str, max_tokens: int = 20) -> str | None:
     """Run classification on the router model. Returns response text or None."""
     model = _get_router_model()

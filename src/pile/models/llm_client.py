@@ -16,7 +16,7 @@ from agent_framework import (
 )
 from agent_framework._types import ResponseStream, ChatResponseUpdate, UsageDetails
 
-from pile.models.engine import chat_completion
+from pile.models.engine import chat_completion, chat_completion_stream
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +173,7 @@ class LlamaCppClient(
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         if stream:
-            raise NotImplementedError("Streaming is not supported by LlamaCppClient")
+            return self._stream_response(messages=messages, options=options)
 
         async def _call() -> ChatResponse:
             validated = await self._validate_options(options)
@@ -204,3 +204,109 @@ class LlamaCppClient(
             return _parse_response(raw)
 
         return _call()
+
+    def _stream_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Stream chat completion tokens from llama-cpp-python.
+
+        Bridges the sync generator from llama-cpp to async by running it
+        in a thread and feeding chunks through an asyncio.Queue.
+        """
+        import queue as thread_queue
+
+        async def _generate():
+            validated = await self._validate_options(options)
+            dicts = _messages_to_dicts(messages)
+
+            raw_tools = validated.get("tools")
+            tools = None
+            if raw_tools:
+                tools = [
+                    t.to_json_schema_spec() if hasattr(t, "to_json_schema_spec") else t
+                    for t in raw_tools
+                ]
+
+            max_tokens = validated.get("max_tokens", 2048)
+            temperature = validated.get("temperature", 0.7)
+
+            # Bridge sync generator → async via thread + queue
+            q: thread_queue.Queue = thread_queue.Queue()
+            _sentinel = object()
+
+            def _produce():
+                try:
+                    for chunk in chat_completion_stream(
+                        messages=dicts,
+                        tools=tools,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    ):
+                        q.put(chunk)
+                except Exception as exc:
+                    q.put(exc)
+                finally:
+                    q.put(_sentinel)
+
+            loop = asyncio.get_event_loop()
+            loop.run_in_executor(None, _produce)
+
+            while True:
+                # Poll queue without blocking the event loop
+                while q.empty():
+                    await asyncio.sleep(0.01)
+                item = q.get_nowait()
+                if item is _sentinel:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+
+                choice = item.get("choices", [{}])[0]
+                delta = choice.get("delta", {})
+                text = delta.get("content")
+                if text:
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text(text)],
+                        role="assistant",
+                        finish_reason=choice.get("finish_reason"),
+                    )
+
+        def _finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            all_text = "".join(
+                c.text for u in updates for c in (u.contents or [])
+                if c.type == "text" and c.text
+            )
+            # Parse tool calls from accumulated text
+            tool_contents = []
+            remaining_text = all_text
+            if "<tool_call>" in all_text:
+                xml_calls = _parse_xml_tool_calls(all_text)
+                for i, call in enumerate(xml_calls):
+                    import json as _json
+                    tool_contents.append(
+                        Content.from_function_call(
+                            call_id=f"call_{i}_{call['name']}",
+                            name=call["name"],
+                            arguments=_json.dumps(call["arguments"]),
+                        )
+                    )
+                import re
+                remaining_text = re.sub(
+                    r"<tool_call>.*?</tool_call>", "", all_text, flags=re.DOTALL
+                ).strip()
+
+            contents = []
+            if remaining_text:
+                contents.append(Content.from_text(remaining_text))
+            contents.extend(tool_contents)
+
+            finish = "tool_calls" if tool_contents else "stop"
+            return ChatResponse(
+                messages=Message("assistant", contents),
+                finish_reason=finish,
+            )
+
+        return ResponseStream(stream=_generate(), finalizer=_finalizer)
