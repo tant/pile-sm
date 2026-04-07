@@ -228,7 +228,7 @@ def jira_list_boards(
     resp.raise_for_status()
     boards = resp.json().get("values", [])
     if not boards:
-        return f"No boards found."
+        return "No boards found."
     lines = [f"**{len(boards)} boards found:**"]
     for b in boards:
         project = b.get("location", {}).get("projectKey", "")
