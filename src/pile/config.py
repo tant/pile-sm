@@ -39,18 +39,6 @@ class GitRepo:
 
 
 class Settings(BaseSettings):
-    # LLM Provider: "ollama" (default), "openai", or "ollama-native"
-    llm_provider: str = "ollama"
-
-    # Ollama (used when llm_provider is "ollama" or "ollama-native")
-    ollama_host: str = "http://localhost:11434"
-    ollama_model_id: str = "qwen3.5:9b"
-
-    # OpenAI-compatible (used when llm_provider is "openai")
-    openai_base_url: str = "http://localhost:1234/v1"
-    openai_model: str = "qwen3.5:9b"
-    openai_api_key: str = "lm-studio"
-
     # Jira
     jira_base_url: str = "https://your-instance.atlassian.net"
     jira_email: str = ""
@@ -66,12 +54,14 @@ class Settings(BaseSettings):
     # Memory / RAG
     memory_enabled: bool = True
     memory_store_path: str = "~/.pile/chromadb"
-    embedding_model_id: str = "nomic-embed-text"
 
-    # Router model (lightweight model for query classification, no tool calling needed)
-    # Uses the same provider endpoint — just a different model ID.
-    # Leave empty to use embedding similarity fallback instead.
-    router_model: str = ""
+    # Model context limits
+    agent_max_tokens: int = 32768
+    router_max_tokens: int = 4096
+
+    # Logging
+    log_level: str = "INFO"
+    log_dir: str = "~/.pile/logs"
 
     # Agent limits (prevent tool call loops, tune per model capability)
     agent_max_iterations: int = 5
@@ -134,7 +124,7 @@ class Settings(BaseSettings):
                 return r
         return None
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

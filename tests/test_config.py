@@ -1,5 +1,6 @@
 """Tests for pile.config — settings and GitRepo parsing."""
 
+import pytest
 from pile.config import GitRepo, Settings
 
 
@@ -81,3 +82,37 @@ class TestSettings:
         assert len(s.git_repo_list) == 1
         s.git_repos = "/repo1,/repo2"
         assert len(s.git_repo_list) == 2
+
+
+def test_new_fields_have_defaults():
+    """New config fields should have sensible defaults."""
+    s = Settings(
+        _env_file=None,
+        jira_base_url="https://x.atlassian.net",
+        jira_email="a@b.com",
+        jira_api_token="tok",
+        jira_project_key="X",
+    )
+    assert s.agent_max_tokens == 32768
+    assert s.router_max_tokens == 4096
+    assert s.log_level == "INFO"
+    assert s.log_dir == "~/.pile/logs"
+
+
+def test_removed_fields_absent():
+    """Old LLM provider fields should no longer exist."""
+    s = Settings(
+        _env_file=None,
+        jira_base_url="https://x.atlassian.net",
+        jira_email="a@b.com",
+        jira_api_token="tok",
+        jira_project_key="X",
+    )
+    assert not hasattr(s, "llm_provider")
+    assert not hasattr(s, "ollama_host")
+    assert not hasattr(s, "ollama_model_id")
+    assert not hasattr(s, "openai_base_url")
+    assert not hasattr(s, "openai_model")
+    assert not hasattr(s, "openai_api_key")
+    assert not hasattr(s, "router_model")
+    assert not hasattr(s, "embedding_model_id")
