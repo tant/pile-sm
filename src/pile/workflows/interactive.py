@@ -10,6 +10,7 @@ all errors), the workflow re-routes to a fallback agent automatically.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from pile.agents.board import create_board_agent
@@ -178,11 +179,11 @@ class RoutedWorkflow:
             return self._run_with_responses(responses, stream=stream)
         return self._run_query(message, stream=stream)
 
-    async def _execute_agent(self, agent_key: str, message: str, stream: bool):
-        """Run a single agent and collect output text + tool calls.
+    async def _execute_agent(self, agent_key: str, message: str):
+        """Run a single agent, yielding streaming updates.
 
-        Returns (full_text, tool_calls). Does NOT yield workflow events —
-        the caller decides what to emit.
+        Yields AgentResponseUpdate objects as they arrive.
+        Caller accumulates full_text for recovery detection.
         """
         agent = self.agents.get(agent_key, self.agents["triage"])
         session = self._get_session(agent_key)
@@ -190,20 +191,55 @@ class RoutedWorkflow:
         # Drain any leftover tool calls from previous runs.
         self.tracker.drain()
 
-        full_text = ""
-        if stream:
-            result_stream = agent.run(message, stream=True, session=session)
-            async for update in result_stream:
-                if update.text:
-                    full_text += update.text
-            await result_stream.get_final_response()
-        else:
-            response = await agent.run(message, session=session)
-            if response.text:
-                full_text = response.text
+        result_stream = agent.run(message, stream=True, session=session)
+        async for update in result_stream:
+            yield update
+        await result_stream.get_final_response()
 
-        tool_calls = self.tracker.drain()
-        return full_text, tool_calls
+    async def _stream_agent_events(self, agent_key: str, message: str, tool_events: asyncio.Queue):
+        """Stream an agent run, yielding WorkflowEvents for text and tool calls.
+
+        After iteration completes, read self._last_full_text and
+        self._last_tool_calls for recovery detection.
+        """
+        from agent_framework._workflows._events import WorkflowEvent
+
+        agent = self.agents.get(agent_key, self.agents["triage"])
+        agent_name = agent.name
+        self.last_agent_key = agent_key.replace("_scrum_prefetch", "scrum")
+        logger.info("Route: '%s' -> %s", message[:50], agent_name)
+        yield WorkflowEvent.executor_invoked(agent_name)
+
+        self._last_full_text = ""
+
+        async for update in self._execute_agent(agent_key, message):
+            # Drain tool events that arrived during this iteration
+            while not tool_events.empty():
+                try:
+                    evt = tool_events.get_nowait()
+                    if evt[0] == "tool_start":
+                        yield WorkflowEvent.emit(agent_name, {"type": "tool_start", "name": evt[1], "args": evt[2]})
+                    elif evt[0] == "tool_end":
+                        yield WorkflowEvent.emit(agent_name, {"type": "tool_end", "record": evt[1]})
+                except asyncio.QueueEmpty:
+                    break
+
+            if update.text:
+                self._last_full_text += update.text
+                yield WorkflowEvent.output(agent_name, update)
+
+        # Drain remaining tool events after stream ends
+        while not tool_events.empty():
+            try:
+                evt = tool_events.get_nowait()
+                if evt[0] == "tool_start":
+                    yield WorkflowEvent.emit(agent_name, {"type": "tool_start", "name": evt[1], "args": evt[2]})
+                elif evt[0] == "tool_end":
+                    yield WorkflowEvent.emit(agent_name, {"type": "tool_end", "record": evt[1]})
+            except asyncio.QueueEmpty:
+                break
+
+        self._last_tool_calls = self.tracker.drain()
 
     async def _run_query(self, message: str, stream: bool = False):
         """Route and execute a user query, with recovery on failure."""
@@ -218,7 +254,7 @@ class RoutedWorkflow:
             cached = get_cached(message)
             if cached and agent_key not in ("jira_write", "memory", "browser"):
                 cached_text, cached_agent = cached
-                logger.info("Cache hit: '%s' → %s", message[:50], cached_agent)
+                logger.info("Cache hit: '%s' -> %s", message[:50], cached_agent)
                 yield WorkflowEvent.executor_invoked(f"{cached_agent} (cached)")
                 yield WorkflowEvent.output(cached_agent, AgentResponseUpdate(text=cached_text))
                 yield WorkflowEvent.executor_completed(cached_agent)
@@ -230,8 +266,6 @@ class RoutedWorkflow:
                 data = prefetch_scrum_data(message, self.board_id)
                 if data:
                     has_prefetch = True
-                    # Create a one-off scrum agent with data — don't overwrite the
-                    # fallback agent in self.agents so it stays available for recovery.
                     self.agents["_scrum_prefetch"] = create_scrum_agent(
                         self.client,
                         middleware=[self.tracker],
@@ -240,21 +274,30 @@ class RoutedWorkflow:
                     agent_key = "_scrum_prefetch"
                     self._sessions.pop("_scrum_prefetch", None)
 
-            # --- Auto-recall: inject memory context (skip for triage/memory) ---
+            # --- Auto-recall: inject memory context ---
             enriched_message = message
             if agent_key not in ("triage", "memory"):
                 memory_context = recall(message)
                 if memory_context:
                     enriched_message = f"{message}\n\n{memory_context}"
 
-            # --- First attempt ---
-            agent = self.agents.get(agent_key, self.agents["triage"])
-            agent_name = agent.name
-            self.last_agent_key = agent_key.replace("_scrum_prefetch", "scrum")
-            logger.info("Route: '%s' → %s", message[:50], agent_name)
-            yield WorkflowEvent.executor_invoked(agent_name)
+            # --- Wire tool event callbacks ---
+            tool_events: asyncio.Queue = asyncio.Queue()
 
-            full_text, tool_calls = await self._execute_agent(agent_key, enriched_message, stream=False)
+            async def _on_tool_start(name, args):
+                await tool_events.put(("tool_start", name, args))
+
+            async def _on_tool_end(record):
+                await tool_events.put(("tool_end", record))
+
+            self.tracker.on_tool_start = _on_tool_start
+            self.tracker.on_tool_end = _on_tool_end
+
+            # --- Stream first agent ---
+            async for event in self._stream_agent_events(agent_key, enriched_message, tool_events):
+                yield event
+            full_text = self._last_full_text
+            tool_calls = self._last_tool_calls
 
             # --- Recovery check ---
             is_failure = (
@@ -265,21 +308,19 @@ class RoutedWorkflow:
             if is_failure:
                 fallback_key = _get_fallback(agent_key, set(self.agents.keys()))
                 if fallback_key:
+                    agent = self.agents.get(agent_key, self.agents["triage"])
                     logger.info(
-                        "Recovery: %s failed (text=%d, tools=%d), retrying → %s",
+                        "Recovery: %s failed (text=%d, tools=%d), retrying -> %s",
                         agent_key, len(full_text), len(tool_calls), fallback_key,
                     )
                     yield WorkflowEvent.executor_completed(agent.name)
 
                     # --- Fallback attempt ---
-                    fallback_agent = self.agents[fallback_key]
-                    yield WorkflowEvent.executor_invoked(fallback_agent.name)
+                    async for event in self._stream_agent_events(fallback_key, enriched_message, tool_events):
+                        yield event
+                    full_text = self._last_full_text
+                    tool_calls = self._last_tool_calls
 
-                    full_text, tool_calls = await self._execute_agent(
-                        fallback_key, enriched_message, stream=False,
-                    )
-
-                    # --- Auto-learn: if fallback succeeded, remember what went wrong ---
                     if full_text and len(full_text.strip()) > 20:
                         original_key = agent_key.replace("_scrum_prefetch", "scrum")
                         learn(
@@ -289,26 +330,24 @@ class RoutedWorkflow:
                         )
 
                     agent_key = fallback_key
-                    agent = fallback_agent
-                    agent_name = fallback_agent.name
-                    is_failure = False  # reset for cache check
+                    is_failure = False
 
-            # Emit final output
-            if full_text:
-                yield WorkflowEvent.output(agent.name, AgentResponseUpdate(contents=[Content(type="text", text=full_text)]))
-
-            # Cache read-only responses (only if not a failed first attempt)
+            # Cache read-only responses
+            agent = self.agents.get(agent_key, self.agents["triage"])
+            agent_name = agent.name
             if full_text and agent_key not in ("jira_write", "memory", "browser"):
                 if not is_failure:
                     set_cached(message, full_text, agent_name)
 
-            yield WorkflowEvent.executor_completed(agent.name)
+            yield WorkflowEvent.executor_completed(agent_name)
 
         except Exception as e:
             logger.exception("Workflow error: %s", e)
             yield WorkflowEvent.executor_failed(agent_name, str(e))
         finally:
             self._is_running = False
+            self.tracker.on_tool_start = None
+            self.tracker.on_tool_end = None
 
     async def _run_with_responses(self, responses: dict, stream: bool = False):
         """Handle approval/follow-up responses — not used in simple routing."""
