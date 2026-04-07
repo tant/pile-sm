@@ -1,8 +1,8 @@
 # Architecture Design: Pile
 
-> **Version**: 0.7
-> **Date**: 2026-04-06
-> **Status**: In Development (V2 — Memory-aware + Prefetch + Multi-model routing)
+> **Version**: 0.8
+> **Date**: 2026-04-07
+> **Status**: In Development (V3 — Self-contained inference + Memory-aware + Prefetch + Multi-model routing)
 
 ---
 
@@ -24,8 +24,8 @@
 │                    ROUTING LAYER                                 │
 │                                                                 │
 │  Phase 1: Keyword regex (<1ms, ~75% queries)                    │
-│  Phase 2: LLM classify — Gemma 2B (~500ms, semantic)           │
-│  Phase 3: Embedding fallback (if no router model)               │
+│  Phase 2: LLM classify — Gemma E2B (~500ms, semantic)          │
+│  Phase 3: Embedding fallback (if router model unavailable)      │
 │                                                                 │
 │  Cache: exact-match (5min TTL, read-only queries)               │
 └──────────────────────────┬──────────────────────────────────────┘
@@ -71,20 +71,27 @@
 │                                                                 │
 │  ChromaDB (embedded, persistent at ~/.pile/chromadb/)            │
 │  Collections: memories | documents                              │
-│  Embedding: configured provider (LM Studio / Ollama)            │
+│  Embedding: local llama-cpp (nomic-embed-text-v1.5 GGUF)       │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                      LLM LAYER                                   │
-│                                                                 │
-│  Provider: LM Studio (OpenAI-compatible) / Ollama               │
+│               Self-contained (llama-cpp-python)                  │
 │                                                                 │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
 │  │ Router Model     │  │ Agent Model      │  │ Embedding    │  │
-│  │ gemma-4-e2b-it   │  │ qwen3.5-4b-mlx   │  │ nomic-embed  │  │
+│  │ Gemma 4 E2B      │  │ Qwen 3.5 4B     │  │ nomic-embed  │  │
+│  │ GGUF Q4_K_M      │  │ GGUF Q4_K_M     │  │ GGUF Q8_0    │  │
 │  │ classify only    │  │ tool calling     │  │ memory/RAG   │  │
+│  │ n_ctx=4096       │  │ n_ctx=32768     │  │ n_ctx=2048   │  │
 │  │ ~500ms, 1 token  │  │ ~20-60s          │  │ ~50ms        │  │
 │  └──────────────────┘  └──────────────────┘  └──────────────┘  │
+│                                                                 │
+│  Auto-download từ HuggingFace on first run                      │
+│  Parallel download (ThreadPoolExecutor) + hf_xet acceleration   │
+│  Auto-resume nếu bị ngắt giữa chừng                            │
+│  GPU auto-detect: macOS Metal / Linux CUDA / CPU fallback       │
+│  Storage: ~/.pile/models/{role}/{filename}                      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -119,7 +126,7 @@ Xử lý ~70% queries. Thứ tự quan trọng — scrum trước sprint để b
 
 ### Phase 2: LLM Classifier (~500ms)
 
-Khi keyword không match, gọi router model (Gemma 2B) với prompt classify ngắn:
+Khi keyword không match, gọi router model (Gemma E2B) với prompt classify ngắn:
 
 ```
 Pick one agent for this query. Reply ONLY the agent name.
@@ -132,13 +139,11 @@ Query: "Khanh đang bận gì vậy?"
 Agent:
 ```
 
-Model trả 1 token duy nhất (ví dụ `jira_query`). Không cần tool calling — bất kỳ model nào follow instruction được đều dùng được (Gemma, Phi, SmolLM...).
-
-Config qua `ROUTER_MODEL` trong `.env`. Cùng provider endpoint, chỉ khác model ID.
+Model trả 1 token duy nhất (ví dụ `jira_query`). Không cần tool calling — bất kỳ model nào follow instruction được đều dùng được.
 
 ### Phase 3: Embedding Fallback
 
-Nếu `ROUTER_MODEL` không set, dùng cosine similarity giữa query embedding và agent descriptions. Kém chính xác hơn LLM classify (~60% vs ~89%).
+Nếu router model không khả dụng, dùng cosine similarity giữa query embedding và agent descriptions. Kém chính xác hơn LLM classify (~60% vs ~89%).
 
 ### Caching
 
@@ -293,7 +298,7 @@ Recall: "TETRA project uses 'Done' instead of 'Resolved' status"
 → Agent dùng status=Done ngay lần đầu
 ```
 
-**Auto-learn** (`context.learn`): Khi recovery trigger thành công (agent A fail → agent B OK), nén bài học qua router model (Gemma 2B) rồi lưu vào ChromaDB:
+**Auto-learn** (`context.learn`): Khi recovery trigger thành công (agent A fail → agent B OK), nén bài học qua router model (Gemma E2B) rồi lưu vào ChromaDB:
 
 ```
 Recovery: board agent failed, jira_query succeeded for "Khanh đang làm gì?"
@@ -301,7 +306,7 @@ Recovery: board agent failed, jira_query succeeded for "Khanh đang làm gì?"
 → Save to memories collection (type=auto_learn, source=system)
 ```
 
-**Compression**: Dùng Gemma 2B prompt ngắn "Compress this into ONE short factual statement (under 50 words)". Tiết kiệm token lưu trữ — từ ~100 words xuống ~20 words.
+**Compression**: Dùng Gemma E2B prompt ngắn "Compress this into ONE short factual statement (under 50 words)". Tiết kiệm token lưu trữ — từ ~100 words xuống ~20 words.
 
 Vòng lặp tự cải thiện:
 ```
@@ -358,31 +363,88 @@ Playwright + Firefox, persistent profile at `~/.pile/browser/`. Auto-login cho J
 
 ---
 
-## 7. Health Checks
+## 7. LLM Layer — Self-Contained Inference
+
+### 7.1 Architecture
+
+Không phụ thuộc external server (Ollama, LM Studio). App tự tải GGUF model từ HuggingFace và chạy inference nội bộ qua `llama-cpp-python`.
+
+### 7.2 Model Registry
+
+Models cố định trong code (`models/registry.py`):
+
+| Role | Model | GGUF | Quantization | Size | Context |
+|---|---|---|---|---|---|
+| Agent | Qwen 3.5 4B | `unsloth/Qwen3.5-4B-GGUF` | Q4_K_M | 2.55 GB | 32768 |
+| Router | Gemma 4 E2B | `unsloth/gemma-4-E2B-it-GGUF` | Q4_K_M | 2.89 GB | 4096 |
+| Embedding | nomic-embed-text v1.5 | `nomic-ai/nomic-embed-text-v1.5-GGUF` | Q8_0 | 0.14 GB | 2048 |
+
+Storage: `~/.pile/models/{role}/{filename}`
+
+### 7.3 Model Manager
+
+Lifecycle: check → download → load → serve.
+
+**Download:**
+- `huggingface_hub.hf_hub_download()` — auto-resume nếu bị ngắt
+- Parallel download 3 models cùng lúc (`ThreadPoolExecutor`)
+- `hf_xet` acceleration cho per-file download speed
+- First-run auto-trigger, hiển thị progress
+
+**Load:**
+- `llama_cpp.Llama()` — 3 singleton instances
+- GPU auto-detect: macOS Metal (`n_gpu_layers=-1`), Linux CUDA, fallback CPU
+- Agent model: `chat_format="chatml-function-calling"` cho tool calling
+- Embedding model: `embedding=True`
+
+### 7.4 MAF Integration
+
+Custom `LlamaCppClient` subclass `BaseChatClient` với `FunctionInvocationLayer` + `ChatMiddlewareLayer`:
+
+```python
+class LlamaCppClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
+    def _inner_get_response(self, *, messages, stream, options, **kwargs):
+        # Convert MAF Messages → llama-cpp dicts
+        # Call local engine
+        # Convert response → ChatResponse with Content objects
+```
+
+Tương thích toàn bộ MAF orchestration: workflows, tool calling, handoffs.
+
+### 7.5 Inference Logging
+
+Logger `pile.inference`, file rotation (50MB, 7 files) tại `~/.pile/logs/inference.log`.
+
+| Level | Nội dung |
+|---|---|
+| WARNING | Errors, anomalies (empty response, context overflow) |
+| INFO | Mỗi LLM call: role, latency, input/output tokens, tool calls, status |
+| DEBUG | Full prompt + response content (troubleshoot & phân tích chất lượng) |
+
+---
+
+## 8. Health Checks
 
 Startup checks (`pile.health`), warnings không block:
 
 | Check | Condition | What |
 |---|---|---|
-| LLM provider | always | Endpoint reachable + LLM model loaded |
-| Router model | if `ROUTER_MODEL` set | Router model loaded on same provider |
+| Models | always | GGUF files exist at `~/.pile/models/` |
 | Jira | always | Auth valid |
-| Embedding model | if `MEMORY_ENABLED` | Embedding model loaded on configured provider |
 | Browser | if `BROWSER_ENABLED` | Playwright Firefox installed |
 
 ---
 
-## 8. Configuration
+## 9. Configuration
 
 ```ini
-# LLM Provider
-LLM_PROVIDER=openai                        # "ollama" | "openai" | "ollama-native"
-OPENAI_BASE_URL=http://localhost:1234/v1    # LM Studio
-OPENAI_MODEL=qwen3.5-4b-mlx                # Agent model (tool calling)
-OPENAI_API_KEY=lm-studio
+# Model Context Limits
+AGENT_MAX_TOKENS=32768              # Qwen context window
+ROUTER_MAX_TOKENS=4096              # Gemma context window
 
-# Router Model
-ROUTER_MODEL=gemma-4-e2b-it                # Query classifier (no tool calling needed)
+# Logging
+LOG_LEVEL=INFO                      # ERROR, WARNING, INFO, DEBUG
+LOG_DIR=~/.pile/logs
 
 # Jira
 JIRA_BASE_URL=https://instance.atlassian.net
@@ -396,28 +458,34 @@ AGENT_MAX_FUNCTION_CALLS=15
 
 # Memory / RAG
 MEMORY_ENABLED=true
-EMBEDDING_MODEL_ID=text-embedding-nomic-embed-text-v1.5
+MEMORY_STORE_PATH=~/.pile/chromadb
 
 # Browser
 BROWSER_ENABLED=true
 ```
 
-Tất cả models (agent, router, embedding) chạy trên cùng provider endpoint.
+Models cố định trong code — không cần config model IDs.
 
 ---
 
-## 9. Project Structure
+## 10. Project Structure
 
 ```
 src/pile/
 ├── config.py              # Settings (pydantic-settings + .env)
-├── client.py              # LLM client factory
-├── health.py              # Startup health checks (provider-aware)
+├── client.py              # LLM client factory (LlamaCppClient)
+├── health.py              # Startup health checks (model files, Jira, browser)
 ├── router.py              # 3-phase router (keyword → LLM → embedding)
 ├── prefetch.py            # Data prefetch for Scrum Agent
 ├── context.py             # Auto-recall + auto-learn (memory integration)
 ├── middleware.py           # ToolCallTracker (timing, logging, loop detection)
 ├── cache.py               # Semantic cache (exact-match, 5min TTL)
+├── models/
+│   ├── registry.py        # Fixed GGUF model definitions (HF repos, filenames)
+│   ├── manager.py         # Download from HF + load llama-cpp instances
+│   ├── engine.py          # Inference functions (chat, router, embed)
+│   ├── llm_client.py      # MAF-compatible LlamaCppClient (BaseChatClient)
+│   └── logging.py         # Inference logger (rotation, structured output)
 ├── agents/
 │   ├── triage.py          # Memory + browser handler
 │   ├── jira_query.py      # Jira read (search, details, changelog, curl)
@@ -434,7 +502,7 @@ src/pile/
 │   ├── browser_tools.py   # 6 Browser tools (Playwright)
 │   └── utils.py           # ADF conversion
 ├── memory/
-│   ├── store.py           # ChromaDB wrapper (provider-aware embedding)
+│   ├── store.py           # ChromaDB wrapper (local embedding)
 │   └── ingest.py          # PDF/markdown → chunks
 ├── workflows/
 │   ├── interactive.py     # Routed workflow + recovery
@@ -448,27 +516,26 @@ src/pile/
 
 ---
 
-## 10. Design Decisions
+## 11. Design Decisions
 
 | Quyết định | Lý do |
 |---|---|
+| Self-contained inference (llama-cpp-python) | Zero external dependency — không cần Ollama/LM Studio |
+| GGUF format duy nhất | Một format cho cả 3 roles, cross-platform, community lớn |
+| Models cố định trong code | User không cần config model IDs — đơn giản hóa setup |
+| Parallel download + hf_xet | Giảm thời gian first-run setup (~5.6GB total) |
+| Auto-resume download | Mạng yếu không mất progress |
+| GPU auto-detect | macOS Metal / Linux CUDA / CPU — user không config |
+| LlamaCppClient subclass BaseChatClient | Tương thích MAF orchestration mà không đổi agent/workflow code |
+| Inference logging 3 levels | INFO cho monitor, DEBUG cho full prompt/response troubleshoot |
 | Deterministic router thay HandoffBuilder | HandoffBuilder thêm 7 transfer tools → overwhelm model 9B/4B |
-| LLM classifier (Gemma 2B) thay embedding similarity | Embedding scores quá sát nhau (~0.44-0.47), LLM hiểu ngữ nghĩa tốt hơn (89% vs 60%) |
-| Router model riêng, không dùng agent model | Gemma 2B nhanh (~500ms), không cần tool calling. Qwen 4B chuyên tool calling |
-| Keyword patterns thu hẹp, đẩy ambiguous sang LLM | Keyword bắt sai 7% → thu hẹp pattern rộng, LLM xử lý ambiguous tốt hơn |
+| LLM classifier (Gemma E2B) thay embedding similarity | Embedding scores quá sát nhau (~0.44-0.47), LLM hiểu ngữ nghĩa tốt hơn (89% vs 60%) |
+| Router model riêng, không dùng agent model | Gemma E2B nhanh (~500ms), không cần tool calling. Qwen 4B chuyên tool calling |
 | Prefetch data cho Scrum Agent | Model 4B loop tool calls khi tự tìm data, nhưng phân tích tốt khi có data sẵn |
-| Scrum 2 modes (prefetch + fallback) | Prefetch cho 90% queries; fallback giữ full tools cho edge cases |
 | Loop detection (block tool 3+ lần) | Model 4B hay lặp cùng tool với args hơi khác — cắt sớm buộc phân tích |
 | Recovery fallback chains | One-shot routing không perfect → cơ chế tự sửa khi sai |
-| `_scrum_prefetch` key riêng | Không ghi đè fallback scrum agent — cả 2 modes tồn tại cùng lúc |
-| Max 1 retry | Trade-off speed vs resilience — 2 agent runs là chấp nhận được |
-| Triage không có Jira tools | Giữ mỗi agent focused. Recovery sẽ chuyển sang đúng agent |
-| Singleton httpx client cho Jira | Reuse TCP/TLS connections |
-| Cùng 1 provider cho tất cả models | Đơn giản ops — 1 endpoint (LM Studio hoặc Ollama) |
-| Embedding giữ cho Memory/RAG, bỏ khỏi routing | Embedding tốt cho semantic search docs, kém cho classify intent |
 | Auto-recall trước mỗi agent run | Agent có context từ memory → gọi đúng tool lần đầu, tránh loop |
 | Auto-learn từ recovery | Mỗi lần fail-recover thành lesson → lần sau không lặp sai lầm |
-| Compress lesson qua Gemma 2B | Tiết kiệm token lưu trữ (~100 words → ~20 words), cùng model đã load |
+| Singleton httpx client cho Jira | Reuse TCP/TLS connections |
 | `@_safe_jira_call` decorator | DRY error handling cho tất cả Jira tools |
 | Git tools validate input qua regex | Chống command injection |
-| Tool-based retrieval thay ContextProvider | ContextProvider inject mọi call → lãng phí token |

@@ -2,7 +2,7 @@
 
 **Local-first Scrum Master assistant** — quản lý sprint, phân tích team performance, tư vấn Agile methodology. Chạy hoàn toàn trên máy nội bộ, không gửi data ra cloud.
 
-Built on [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) · LLM via [Ollama](https://ollama.com) / [LM Studio](https://lmstudio.ai) · UI via [Chainlit](https://chainlit.io)
+Built on [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) · LLM via [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) (self-contained) · UI via [Chainlit](https://chainlit.io)
 
 ---
 
@@ -10,10 +10,11 @@ Built on [Microsoft Agent Framework](https://github.com/microsoft/agent-framewor
 
 | | Feature | Detail |
 |---|---|---|
+| **Self-contained** | Zero external LLM dependency | Models auto-download from HuggingFace on first run. No Ollama or LM Studio needed |
 | **Jira** | 19 tools | Search, CRUD issues, sprints, boards, backlog, epics, changelog, linking. Write ops require approval |
 | **Git** | Read-only | Commit history, branches, diffs, blame. Private repo support |
 | **Scrum** | 17 capabilities | Standup, sprint review, retro, workload balance, cycle time, data quality audit, delay alerts, stakeholder summary... |
-| **Memory** | Remember & Forget | Long-term memory across sessions. Semantic search via ChromaDB + Ollama embeddings |
+| **Memory** | Remember & Forget | Long-term memory across sessions. Semantic search via ChromaDB + local embeddings |
 | **Knowledge** | RAG | Ingest PDF/markdown → chunk → embed → query. Feed whitepapers, meeting notes, process docs |
 | **Browser** | Web Scraping | Playwright + Firefox. Auto-login Jira/GitHub/GitLab. Persistent sessions |
 | **Charts** | Auto-visualization | Detect numeric data in responses → render interactive Plotly charts |
@@ -25,10 +26,9 @@ Built on [Microsoft Agent Framework](https://github.com/microsoft/agent-framewor
 
 ```bash
 git clone git@github.com:tant/pile-sm.git && cd pile-sm
-cp .env.sample .env              # configure Jira, Ollama, etc.
+cp .env.sample .env              # configure Jira credentials
 uv sync                          # install dependencies
 playwright install firefox       # browser engine
-ollama pull nomic-embed-text     # embedding model for RAG
 ```
 
 ```bash
@@ -39,6 +39,13 @@ uv run chainlit run src/pile/ui/chainlit_app.py
 uv run pile
 ```
 
+On first run, Pile automatically downloads ~5.6 GB of GGUF models from HuggingFace:
+- **Qwen 3.5 4B** (agent, tool calling) — 2.55 GB
+- **Gemma 4 E2B** (router, query classification) — 2.89 GB
+- **nomic-embed-text v1.5** (embedding, memory/RAG) — 0.14 GB
+
+Downloads run in parallel with auto-resume. Subsequent runs load models from `~/.pile/models/`.
+
 ---
 
 ## Configuration
@@ -46,16 +53,14 @@ uv run pile
 All settings via `.env`:
 
 ```env
-# --- LLM ---
-LLM_PROVIDER=ollama                          # "ollama" | "openai" | "ollama-native"
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL_ID=qwen3.5:9b
+# --- Model Context Limits ---
+AGENT_MAX_TOKENS=32768            # Qwen context window
+ROUTER_MAX_TOKENS=4096            # Gemma context window
 
-# Hoặc LM Studio / OpenAI-compatible endpoint:
-# LLM_PROVIDER=openai
-# OPENAI_BASE_URL=http://localhost:1234/v1
-# OPENAI_MODEL=qwen3.5:9b
-# OPENAI_API_KEY=lm-studio
+# --- Logging ---
+# DEBUG logs full LLM prompts/responses for troubleshooting
+LOG_LEVEL=INFO
+LOG_DIR=~/.pile/logs
 
 # --- Jira ---
 JIRA_BASE_URL=https://your-instance.atlassian.net
@@ -70,7 +75,6 @@ JIRA_PROJECT_KEY=YOUR_KEY
 # --- Memory / RAG ---
 MEMORY_ENABLED=true
 MEMORY_STORE_PATH=~/.pile/chromadb
-EMBEDDING_MODEL_ID=nomic-embed-text
 
 # --- Browser (optional) ---
 BROWSER_ENABLED=true
@@ -79,6 +83,8 @@ BROWSER_ENABLED=true
 # BROWSER_GITHUB_USERNAME=...
 # BROWSER_GITHUB_PASSWORD=...
 ```
+
+Models are fixed in code — no model configuration needed.
 
 ---
 
@@ -123,10 +129,21 @@ graph TD
     User["User<br/><small>Chainlit Web UI / CLI</small>"]
 
     subgraph Orchestration["Orchestration Layer — Microsoft Agent Framework"]
-        Triage["<b>Triage Agent</b><br/><small>Router + Memory + Browser ops</small>"]
-        Jira["<b>Jira Agent</b><br/><small>19 tools · read + write</small>"]
+        Router["<b>Smart Router</b><br/><small>Keyword → LLM classify → Embedding</small>"]
+        Triage["<b>Triage Agent</b><br/><small>Memory + Browser ops</small>"]
+        JiraQ["<b>Jira Query Agent</b><br/><small>4 tools · read-only</small>"]
+        JiraW["<b>Jira Write Agent</b><br/><small>5 tools · approval required</small>"]
+        Board["<b>Board Agent</b><br/><small>3 tools</small>"]
+        Sprint["<b>Sprint Agent</b><br/><small>5 tools</small>"]
+        Epic["<b>Epic Agent</b><br/><small>3 tools</small>"]
         Git["<b>Git Agent</b><br/><small>5 tools · read-only</small>"]
-        Scrum["<b>Scrum Agent</b><br/><small>Jira + Git + Memory + Browser</small>"]
+        Scrum["<b>Scrum Agent</b><br/><small>Prefetch + Git + Memory</small>"]
+    end
+
+    subgraph LLM["LLM Layer — Self-contained (llama-cpp-python)"]
+        AgentModel["Qwen 3.5 4B<br/><small>Tool calling · n_ctx=32768</small>"]
+        RouterModel["Gemma 4 E2B<br/><small>Classify · n_ctx=4096</small>"]
+        EmbedModel["nomic-embed-text<br/><small>Embedding · n_ctx=2048</small>"]
     end
 
     subgraph Infrastructure["Infrastructure"]
@@ -134,31 +151,39 @@ graph TD
         GitCLI["Git CLI<br/><small>subprocess</small>"]
         ChromaDB["ChromaDB<br/><small>memories + documents</small>"]
         Browser["Playwright<br/><small>Firefox headless</small>"]
-        LLM["Ollama / LM Studio<br/><small>LLM + Embeddings</small>"]
     end
 
     Charts["Plotly Charts<br/><small>auto-detect numeric data</small>"]
 
-    User -->|request| Triage
-    Triage -->|handoff| Jira
-    Triage -->|handoff| Git
-    Triage -->|handoff| Scrum
-    Scrum -.->|data| Jira
-    Jira --> JiraAPI
-    Git --> GitCLI
+    User -->|request| Router
+    Router -->|route| Triage
+    Router -->|route| JiraQ
+    Router -->|route| JiraW
+    Router -->|route| Board
+    Router -->|route| Sprint
+    Router -->|route| Epic
+    Router -->|route| Git
+    Router -->|route| Scrum
+    JiraQ --> JiraAPI
+    JiraW --> JiraAPI
+    Board --> JiraAPI
+    Sprint --> JiraAPI
+    Epic --> JiraAPI
     Triage --> ChromaDB
     Triage --> Browser
     Scrum --> ChromaDB
-    Scrum --> Browser
-    ChromaDB --> LLM
-    Orchestration --> LLM
+    Orchestration --> AgentModel
+    Router --> RouterModel
+    ChromaDB --> EmbedModel
     User -.->|render| Charts
 ```
 
 **Key design decisions:**
-- **No dedicated Memory/Browser agents** — Triage handles directly, fewer handoffs = faster on 9B model
-- **Tool-based RAG** — no context injection on every call, saves tokens
-- **Auto chart detection** — post-processing, transparent to agents
+- **Self-contained inference** — llama-cpp-python runs GGUF models locally, no external server
+- **3 specialized models** — agent (tool calling), router (classify), embedding (RAG)
+- **GPU auto-detect** — macOS Metal, Linux CUDA, CPU fallback
+- **Parallel download** — first-run setup downloads all models concurrently
+- **8 specialist agents** — each sees only 3-5 tools, prevents model overwhelm
 - **All write ops require approval** — human-in-the-loop for safety
 
 ---
@@ -168,8 +193,11 @@ graph TD
 | Component | Technology |
 |---|---|
 | Agent Framework | [Microsoft Agent Framework 1.0](https://github.com/microsoft/agent-framework) |
-| LLM | Ollama / LM Studio / any OpenAI-compatible endpoint (`qwen3.5:9b` default) |
-| Embeddings | Ollama (`nomic-embed-text`) |
+| LLM Inference | [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) (GGUF, Metal, CUDA) |
+| Agent Model | Qwen 3.5 4B (Q4_K_M) |
+| Router Model | Gemma 4 E2B (Q4_K_M) |
+| Embeddings | nomic-embed-text v1.5 (Q8_0) |
+| Model Download | [huggingface-hub](https://github.com/huggingface/huggingface_hub) + hf_xet |
 | Vector Store | ChromaDB (embedded, persistent) |
 | Browser | Playwright + Firefox |
 | Charts | Plotly (interactive, dark theme) |
@@ -184,29 +212,39 @@ graph TD
 
 ```
 src/pile/
+├── models/
+│   ├── registry.py        # Fixed GGUF model definitions
+│   ├── manager.py         # Download + load lifecycle
+│   ├── engine.py          # Inference (chat, router, embed)
+│   ├── llm_client.py      # MAF-compatible LlamaCppClient
+│   └── logging.py         # Inference logger (rotation, levels)
 ├── agents/
 │   ├── triage.py          # Router + memory/browser handler
-│   ├── jira.py            # Jira specialist
+│   ├── jira_query.py      # Jira read specialist
+│   ├── jira_write.py      # Jira write specialist
+│   ├── board.py           # Board info
+│   ├── sprint.py          # Sprint management
+│   ├── epic.py            # Epics + backlog
 │   ├── git.py             # Git specialist
-│   └── scrum.py           # Scrum Master + memory_search + browser
+│   └── scrum.py           # Scrum Master (prefetch + fallback)
 ├── tools/
-│   ├── jira_tools.py      # 8 Jira REST API tools
+│   ├── jira_tools.py      # 19 Jira REST API tools
 │   ├── git_tools.py       # 5 Git CLI tools
 │   ├── memory_tools.py    # 6 memory/knowledge tools
 │   ├── browser_tools.py   # 6 browser tools (Playwright)
 │   └── utils.py           # ADF text conversion
 ├── memory/
-│   ├── store.py           # ChromaDB wrapper (2 collections)
+│   ├── store.py           # ChromaDB wrapper (local embedding)
 │   └── ingest.py          # PDF/markdown extraction + chunking
 ├── workflows/
-│   ├── interactive.py     # Handoff workflow (primary Q&A)
+│   ├── interactive.py     # Routed workflow + recovery
 │   ├── standup.py         # Sequential pipeline
 │   └── planning.py        # GroupChat session
 ├── ui/
 │   ├── chainlit_app.py    # Web UI + file upload + chart rendering
 │   ├── charts.py          # Auto chart detection + Plotly builders
 │   └── cli.py             # Terminal interface
-├── client.py              # LLM client factory
+├── client.py              # LLM client factory (LlamaCppClient)
 ├── config.py              # Settings (pydantic-settings)
 └── health.py              # Startup health checks
 ```
