@@ -36,9 +36,11 @@ class ToolCallTracker(FunctionMiddleware):
             print(f"{call.name}({call.arguments}) -> {call.result} [{call.duration_ms}ms]")
     """
 
-    def __init__(self):
+    def __init__(self, on_tool_start=None, on_tool_end=None):
         self._calls: list[ToolCallRecord] = []
         self._seen_tools: dict[str, int] = {}  # tool_name → call count
+        self.on_tool_start = on_tool_start
+        self.on_tool_end = on_tool_end
 
     async def process(self, context: FunctionInvocationContext, call_next):
         args = dict(context.arguments) if hasattr(context.arguments, '__iter__') else {}
@@ -59,6 +61,8 @@ class ToolCallTracker(FunctionMiddleware):
                 timestamp=time.time(),
             )
             self._calls.append(record)
+            if self.on_tool_end:
+                await self.on_tool_end(record)
             context.result = f"You already called {tool_name} {count} times. Stop calling tools and analyze the data you have."
             return
 
@@ -70,6 +74,9 @@ class ToolCallTracker(FunctionMiddleware):
             timestamp=time.time(),
         )
         logger.info("CALL %s(%s)", context.function.name, args)
+
+        if self.on_tool_start:
+            await self.on_tool_start(tool_name, args)
 
         start = time.monotonic()
         await call_next()
@@ -83,6 +90,9 @@ class ToolCallTracker(FunctionMiddleware):
 
         logger.info("DONE %s → %dms | %s", context.function.name, record.duration_ms, record.result[:100] if record.result else "")
         self._calls.append(record)
+
+        if self.on_tool_end:
+            await self.on_tool_end(record)
 
     def drain(self) -> list[ToolCallRecord]:
         """Return and clear all recorded calls."""
