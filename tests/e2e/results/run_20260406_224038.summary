@@ -1,0 +1,210 @@
+======================================================================
+PILE E2E TEST REPORT — 2026-04-07 07:24:46
+======================================================================
+
+Total questions: 100
+Total time:      7299s (121.7min)
+
+--- Status ---
+  OK:       75 (75%)
+  Error:     0 (0%)
+  Timeout:  24 (24%)
+  Empty:     1 (1%)
+  Cached:    0
+
+--- Routing ---
+  Correct:  63/100 (63%)
+
+--- Timing (OK only) ---
+  Avg: 58.6s | Min: 14.0s | Max: 117.8s
+
+--- Per Agent ---
+  _scrum_prefetch total=34 ok=32 avg=59.9s
+  board          total= 5 ok= 4 avg=19.6s
+  epic           total=10 ok= 8 avg=62.7s
+  jira_query     total=34 ok=17 avg=68.8s
+  memory         total= 7 ok= 6 avg=21.6s
+  sprint         total=10 ok= 8 avg=75.2s
+
+--- Per Category ---
+  backlog            total= 2 ok= 1 avg=50.7s
+  blockers           total= 4 ok= 2 avg=31.9s
+  board-config       total= 2 ok= 1 avg=14.0s
+  board-info         total= 2 ok= 2 avg=21.4s
+  board-list         total= 1 ok= 1 avg=21.4s
+  burndown           total= 1 ok= 1 avg=32.6s
+  changelog          total= 2 ok= 2 avg=49.8s
+  curl               total= 3 ok= 2 avg=77.5s
+  cycle-time         total= 1 ok= 1 avg=62.0s
+  data-quality       total= 2 ok= 2 avg=66.8s
+  epic-detail        total= 5 ok= 4 avg=77.9s
+  epic-list          total= 3 ok= 3 avg=46.5s
+  jira-detail        total= 7 ok= 5 avg=37.4s
+  jira-search        total=24 ok=11 avg=84.3s
+  meeting-prep       total= 1 ok= 1 avg=88.4s
+  memory-delete      total= 1 ok= 0 avg=0.0s
+  memory-list        total= 1 ok= 1 avg=22.4s
+  memory-save        total= 2 ok= 2 avg=16.1s
+  memory-search      total= 3 ok= 3 avg=24.9s
+  planning           total= 1 ok= 1 avg=112.3s
+  retro              total= 2 ok= 2 avg=76.6s
+  sprint-list        total= 5 ok= 5 avg=82.2s
+  sprint-read        total= 4 ok= 3 avg=63.5s
+  sprint-report      total= 4 ok= 3 avg=60.5s
+  sprint-review      total= 1 ok= 1 avg=56.0s
+  stakeholder        total= 6 ok= 5 avg=52.9s
+  standup            total= 2 ok= 2 avg=50.3s
+  velocity           total= 2 ok= 2 avg=50.4s
+  workload           total= 6 ok= 6 avg=61.1s
+
+--- Failures ---
+  [ 27] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: What is TETRA-545 about?
+  [ 28] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Search for issues assigned to Khanh Nguyen
+  [ 37] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Nhung Le có bao nhiêu task?
+  [ 38] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Issue nào priority High?
+  [ 39] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Tìm issue liên quan đến i18n
+  [ 40] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Các issue type Bug còn open
+  [ 47] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Có issue nào quá hạn không?
+  [ 55] empty   route=memory dur=22.9s err=
+        Q: Quên hết các memory cũ đi
+  [ 62] timeout route=board dur=120.0s err=Timed out after 120.0s
+        Q: Board config — các column là gì?
+  [ 68] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: What are the open bugs?
+  [ 71] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Tìm issue có keyword esigning
+  [ 74] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Issue nào chưa có assignee?
+  [ 75] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Tìm task liên quan đến UI wireframe
+  [ 82] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Liệt kê issue theo priority
+  [ 83] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Issue mới tạo hôm nay
+  [ 85] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Lệnh lấy sprint issues
+  [ 87] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: What's the status of TETRA-870?
+  [ 88] timeout route=_scrum_prefetch dur=120.0s err=Timed out after 120.0s
+        Q: Sprint summary for the team
+  [ 89] timeout route=epic dur=120.0s err=Timed out after 120.0s
+        Q: List backlog items
+  [ 93] timeout route=epic dur=120.0s err=Timed out after 120.0s
+        Q: Epic Documentation có gì bên trong?
+  [ 94] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Tìm issue resolved tuần này
+  [ 95] timeout route=jira_query dur=120.0s err=Timed out after 120.0s
+        Q: Ticket nào đang bị stuck lâu nhất?
+  [ 96] timeout route=sprint dur=120.0s err=Timed out after 120.0s
+        Q: Có vấn đề gì cần chú ý trong sprint không?
+  [ 99] timeout route=sprint dur=120.0s err=Timed out after 120.0s
+        Q: Show all sub-tasks in current sprint
+  [100] timeout route=_scrum_prefetch dur=120.0s err=Timed out after 120.0s
+        Q: Tình hình chung sprint ra sao rồi?
+
+--- Slow Queries (>30s) ---
+  [ 43] 117.8s route=epic Q: Các issue trong epic Signing Request?
+  [ 46] 114.9s route=jira_query Q: Issue nào đang ở Code Review?
+  [ 77] 113.8s route=jira_query Q: Ai đang rảnh có thể nhận thêm việc?
+  [ 57] 112.3s route=_scrum_prefetch Q: Sprint planning — phân tích backlog
+  [ 73] 112.1s route=jira_query Q: Tan Tran đang được assign issue gì?
+  [ 84] 107.3s route=jira_query Q: Curl command để search bug
+  [ 63] 107.0s route=sprint Q: Danh sách sprint đã đóng
+  [ 56] 105.2s route=_scrum_prefetch Q: Tổng hợp báo cáo cho sếp về sprint
+  [ 97] 103.3s route=_scrum_prefetch Q: Issue nào liên quan đến BPM?
+  [ 49] 101.5s route=jira_query Q: Tìm các sub-task của TETRA-1026
+  [ 30] 100.8s route=sprint Q: What's in the current sprint?
+  [ 45] 96.8s route=sprint Q: Sprint trước có bao nhiêu issue done?
+  [ 64] 92.0s route=sprint Q: Future sprint có gì?
+  [ 59] 88.4s route=_scrum_prefetch Q: Meeting prep cho sprint review
+  [ 86] 86.7s route=_scrum_prefetch Q: How many issues are in Code Review?
+  [ 69] 86.3s route=epic Q: Show me epic list
+  [ 31] 85.7s route=_scrum_prefetch Q: Show sprint progress
+  [ 67] 85.2s route=jira_query Q: Find all issues with status To Do
+  [ 72] 83.3s route=jira_query Q: TETRA-21 xong chưa?
+  [ 26] 79.2s route=jira_query Q: Show me all In Progress issues
+  [ 66] 78.2s route=jira_query Q: Search issues created this week
+  [ 98] 77.8s route=_scrum_prefetch Q: Chuẩn bị nội dung cho meeting retro
+  [ 42] 77.0s route=epic Q: Epic Teams Integration đã xong chưa?
+  [ 58] 75.4s route=_scrum_prefetch Q: Retro sprint này — phân tích vấn đề
+  [ 60] 74.2s route=_scrum_prefetch Q: Phân tích chất lượng data sprint
+  [ 80] 70.2s route=sprint Q: Có bao nhiêu issue Done trong sprint?
+  [ 32] 69.5s route=_scrum_prefetch Q: Give me a standup summary
+  [ 36] 69.1s route=_scrum_prefetch Q: Khanh đang làm những gì?
+  [ 35] 67.8s route=_scrum_prefetch Q: Workload per team member
+  [ 65] 66.4s route=epic Q: Issue TETRA-893 — Refactoring epic gồm những gì?
+  [ 44] 66.4s route=sprint Q: Sprint nào đang active?
+  [ 48] 62.0s route=_scrum_prefetch Q: Cycle time trung bình là bao nhiêu?
+  [ 34] 60.2s route=_scrum_prefetch Q: Velocity analysis
+  [ 20] 59.3s route=_scrum_prefetch Q: Data quality audit — thiếu thông tin gì?
+  [ 90] 58.3s route=_scrum_prefetch Q: Who is working on what?
+  [ 24] 56.0s route=_scrum_prefetch Q: Sprint review — phân tích chi tiết
+  [ 50] 55.8s route=_scrum_prefetch Q: Summary sprint cho meeting
+  [  2] 54.6s route=_scrum_prefetch Q: Liệt kê các issue đang In Progress
+  [ 21] 51.5s route=jira_query Q: Lịch sử thay đổi của TETRA-1028
+  [ 10] 50.7s route=epic Q: Backlog hiện tại có những gì?
+  [ 41] 50.3s route=epic Q: Epic BPM External Worker tiến độ thế nào?
+  [ 29] 49.1s route=sprint Q: List all sprints
+  [ 81] 49.1s route=_scrum_prefetch Q: Tiến độ chung của project
+  [ 22] 48.1s route=jira_query Q: Changelog của TETRA-628
+  [ 19] 47.9s route=_scrum_prefetch Q: Workload balance trong sprint?
+  [ 25] 47.8s route=_scrum_prefetch Q: Tóm tắt cho stakeholder về sprint
+  [ 23] 47.8s route=jira_query Q: Cho tôi lệnh curl để lấy issue TETRA-1028
+  [ 14] 46.7s route=_scrum_prefetch Q: Báo cáo tiến độ sprint
+  [ 33] 42.9s route=_scrum_prefetch Q: Any blockers in the sprint?
+  [ 79] 42.7s route=_scrum_prefetch Q: So sánh workload giữa các member
+  [  6] 42.6s route=jira_query Q: Tìm tất cả bug trong project
+  [ 18] 40.7s route=_scrum_prefetch Q: Phân tích velocity của team
+  [  9] 38.2s route=epic Q: Liệt kê tất cả epic
+  [ 16] 36.1s route=_scrum_prefetch Q: Ai đang bị quá tải công việc?
+  [  7] 34.5s route=jira_query Q: Trạng thái của TETRA-1026?
+  [  5] 34.3s route=jira_query Q: Cho tôi xem chi tiết issue TETRA-628
+  [ 78] 32.6s route=_scrum_prefetch Q: Burndown sprint thế nào?
+  [ 13] 31.1s route=_scrum_prefetch Q: Standup hôm nay thế nào?
+  [ 76] 30.1s route=_scrum_prefetch Q: Sprint review cho sếp ngắn gọn thôi
+
+--- Route Mismatches ---
+  [  2] expected=jira_query actual=_scrum_prefetch Q: Liệt kê các issue đang In Progress
+  [ 13] expected=scrum actual=_scrum_prefetch Q: Standup hôm nay thế nào?
+  [ 14] expected=scrum actual=_scrum_prefetch Q: Báo cáo tiến độ sprint
+  [ 15] expected=scrum actual=_scrum_prefetch Q: Tổng hợp sprint hiện tại cho sếp
+  [ 16] expected=scrum actual=_scrum_prefetch Q: Ai đang bị quá tải công việc?
+  [ 17] expected=scrum actual=_scrum_prefetch Q: Có issue nào bị block không?
+  [ 18] expected=scrum actual=_scrum_prefetch Q: Phân tích velocity của team
+  [ 19] expected=scrum actual=_scrum_prefetch Q: Workload balance trong sprint?
+  [ 20] expected=scrum actual=_scrum_prefetch Q: Data quality audit — thiếu thông tin gì?
+  [ 24] expected=scrum actual=_scrum_prefetch Q: Sprint review — phân tích chi tiết
+  [ 25] expected=scrum actual=_scrum_prefetch Q: Tóm tắt cho stakeholder về sprint
+  [ 31] expected=scrum actual=_scrum_prefetch Q: Show sprint progress
+  [ 32] expected=scrum actual=_scrum_prefetch Q: Give me a standup summary
+  [ 33] expected=scrum actual=_scrum_prefetch Q: Any blockers in the sprint?
+  [ 34] expected=scrum actual=_scrum_prefetch Q: Velocity analysis
+  [ 35] expected=scrum actual=_scrum_prefetch Q: Workload per team member
+  [ 36] expected=jira_query actual=_scrum_prefetch Q: Khanh đang làm những gì?
+  [ 47] expected=scrum actual=jira_query Q: Có issue nào quá hạn không?
+  [ 48] expected=scrum actual=_scrum_prefetch Q: Cycle time trung bình là bao nhiêu?
+  [ 50] expected=scrum actual=_scrum_prefetch Q: Summary sprint cho meeting
+  [ 56] expected=scrum actual=_scrum_prefetch Q: Tổng hợp báo cáo cho sếp về sprint
+  [ 57] expected=scrum actual=_scrum_prefetch Q: Sprint planning — phân tích backlog
+  [ 58] expected=scrum actual=_scrum_prefetch Q: Retro sprint này — phân tích vấn đề
+  [ 59] expected=scrum actual=_scrum_prefetch Q: Meeting prep cho sprint review
+  [ 60] expected=scrum actual=_scrum_prefetch Q: Phân tích chất lượng data sprint
+  [ 76] expected=scrum actual=_scrum_prefetch Q: Sprint review cho sếp ngắn gọn thôi
+  [ 77] expected=scrum actual=jira_query Q: Ai đang rảnh có thể nhận thêm việc?
+  [ 78] expected=scrum actual=_scrum_prefetch Q: Burndown sprint thế nào?
+  [ 79] expected=scrum actual=_scrum_prefetch Q: So sánh workload giữa các member
+  [ 81] expected=scrum actual=_scrum_prefetch Q: Tiến độ chung của project
+  [ 86] expected=jira_query actual=_scrum_prefetch Q: How many issues are in Code Review?
+  [ 88] expected=scrum actual=_scrum_prefetch Q: Sprint summary for the team
+  [ 90] expected=scrum actual=_scrum_prefetch Q: Who is working on what?
+  [ 96] expected=scrum actual=sprint Q: Có vấn đề gì cần chú ý trong sprint không?
+  [ 97] expected=jira_query actual=_scrum_prefetch Q: Issue nào liên quan đến BPM?
+  [ 98] expected=scrum actual=_scrum_prefetch Q: Chuẩn bị nội dung cho meeting retro
+  [100] expected=scrum actual=_scrum_prefetch Q: Tình hình chung sprint ra sao rồi?

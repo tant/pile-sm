@@ -1,0 +1,65 @@
+======================================================================
+PILE E2E TEST REPORT — 2026-04-07 14:57:36
+======================================================================
+
+Total questions: 20
+Total time:      471s (7.9min)
+
+--- Status ---
+  OK:       16 (80%)
+  Error:     0 (0%)
+  Timeout:   0 (0%)
+  Empty:     4 (20%)
+  Cached:    0
+
+--- Routing ---
+  Correct:  18/20 (90%)
+
+--- Timing (OK only) ---
+  Avg: 29.0s | Min: 6.9s | Max: 70.7s
+
+--- Per Agent ---
+  board          total= 2 ok= 2 avg=25.3s
+  epic           total= 1 ok= 1 avg=54.5s
+  jira_query     total= 8 ok= 6 avg=39.1s
+  memory         total= 1 ok= 0 avg=0.0s
+  scrum          total= 6 ok= 6 avg=16.3s
+  sprint         total= 1 ok= 1 avg=26.4s
+  unknown        total= 1 ok= 0 avg=0.0s
+
+--- Per Category ---
+  board-config       total= 1 ok= 1 avg=16.5s
+  board-info         total= 1 ok= 1 avg=34.1s
+  burndown           total= 1 ok= 1 avg=36.3s
+  epic-detail        total= 1 ok= 1 avg=54.5s
+  jira-detail        total= 4 ok= 4 avg=36.0s
+  jira-search        total= 4 ok= 2 avg=45.3s
+  memory-delete      total= 1 ok= 0 avg=0.0s
+  sprint-list        total= 1 ok= 1 avg=26.4s
+  sprint-read        total= 1 ok= 0 avg=0.0s
+  sprint-report      total= 1 ok= 1 avg=19.3s
+  stakeholder        total= 2 ok= 2 avg=10.8s
+  standup            total= 1 ok= 1 avg=6.9s
+  velocity           total= 1 ok= 1 avg=13.7s
+
+--- Failures ---
+  [ 82] empty   route=unknown dur=0.0s err=
+        Q: Liệt kê issue theo priority
+  [ 36] empty   route=jira_query dur=0.0s err=
+        Q: Khanh đang làm những gì?
+  [ 55] empty   route=memory dur=7.3s err=
+        Q: Quên hết các memory cũ đi
+  [ 30] empty   route=jira_query dur=0.0s err=
+        Q: What's in the current sprint?
+
+--- Slow Queries (>30s) ---
+  [ 28] 70.7s route=jira_query Q: Search for issues assigned to Khanh Nguyen
+  [ 72] 62.7s route=jira_query Q: TETRA-21 xong chưa?
+  [ 65] 54.5s route=epic Q: Issue TETRA-893 — Refactoring epic gồm những gì?
+  [  5] 43.9s route=jira_query Q: Cho tôi xem chi tiết issue TETRA-628
+  [ 78] 36.3s route=scrum Q: Burndown sprint thế nào?
+  [ 70] 34.1s route=board Q: Board details please
+
+--- Route Mismatches ---
+  [ 82] expected=jira_query actual=unknown Q: Liệt kê issue theo priority
+  [ 30] expected=sprint actual=jira_query Q: What's in the current sprint?

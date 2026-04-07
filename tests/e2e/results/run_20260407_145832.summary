@@ -1,0 +1,61 @@
+======================================================================
+PILE E2E TEST REPORT — 2026-04-07 15:13:09
+======================================================================
+
+Total questions: 20
+Total time:      873s (14.5min)
+
+--- Status ---
+  OK:       19 (95%)
+  Error:     0 (0%)
+  Timeout:   0 (0%)
+  Empty:     1 (5%)
+  Cached:    0
+
+--- Routing ---
+  Correct:  19/20 (95%)
+
+--- Timing (OK only) ---
+  Avg: 45.3s | Min: 5.4s | Max: 133.4s
+
+--- Per Agent ---
+  board          total= 2 ok= 2 avg=14.3s
+  epic           total= 1 ok= 1 avg=32.7s
+  jira_query     total= 7 ok= 7 avg=83.3s
+  memory         total= 1 ok= 0 avg=0.0s
+  scrum          total= 7 ok= 7 avg=18.6s
+  sprint         total= 2 ok= 2 avg=43.0s
+
+--- Per Category ---
+  board-config       total= 1 ok= 1 avg=13.4s
+  board-info         total= 1 ok= 1 avg=15.1s
+  burndown           total= 1 ok= 1 avg=37.9s
+  epic-detail        total= 1 ok= 1 avg=32.7s
+  jira-detail        total= 4 ok= 4 avg=61.8s
+  jira-search        total= 4 ok= 4 avg=85.7s
+  memory-delete      total= 1 ok= 0 avg=0.0s
+  sprint-list        total= 1 ok= 1 avg=25.2s
+  sprint-read        total= 1 ok= 1 avg=60.8s
+  sprint-report      total= 1 ok= 1 avg=19.3s
+  stakeholder        total= 2 ok= 2 avg=12.8s
+  standup            total= 1 ok= 1 avg=5.4s
+  velocity           total= 1 ok= 1 avg=35.5s
+
+--- Failures ---
+  [ 55] empty   route=memory dur=11.8s err=
+        Q: Quên hết các memory cũ đi
+
+--- Slow Queries (>30s) ---
+  [ 95] 133.4s route=jira_query Q: Ticket nào đang bị stuck lâu nhất?
+  [ 28] 117.6s route=jira_query Q: Search for issues assigned to Khanh Nguyen
+  [ 72] 85.5s route=jira_query Q: TETRA-21 xong chưa?
+  [ 82] 85.0s route=jira_query Q: Liệt kê issue theo priority
+  [  5] 80.2s route=jira_query Q: Cho tôi xem chi tiết issue TETRA-628
+  [ 30] 60.8s route=sprint Q: What's in the current sprint?
+  [ 87] 52.1s route=jira_query Q: What's the status of TETRA-870?
+  [ 78] 37.9s route=scrum Q: Burndown sprint thế nào?
+  [ 18] 35.5s route=scrum Q: Phân tích velocity của team
+  [ 65] 32.7s route=epic Q: Issue TETRA-893 — Refactoring epic gồm những gì?
+
+--- Route Mismatches ---
+  [ 36] expected=jira_query actual=scrum Q: Khanh đang làm những gì?
