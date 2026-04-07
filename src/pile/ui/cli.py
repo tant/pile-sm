@@ -160,7 +160,10 @@ async def _run():
 
 def main():
     """Entry point for the CLI."""
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        print("\nBye!")
 
 
 if __name__ == "__main__":
