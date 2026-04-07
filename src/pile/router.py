@@ -178,29 +178,9 @@ _embedding_cache: dict[str, list[float]] | None = None
 
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a list of texts using the configured provider."""
-    import httpx
-    from pile.config import settings
-
-    if settings.llm_provider == "openai":
-        resp = httpx.post(
-            f"{settings.openai_base_url}/embeddings",
-            json={"model": settings.embedding_model_id, "input": texts},
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()["data"]
-        return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
-
-    # Ollama / ollama-native — batch all texts in one call
-    resp = httpx.post(
-        f"{settings.ollama_host}/api/embed",
-        json={"model": settings.embedding_model_id, "input": texts},
-        timeout=15.0,
-    )
-    resp.raise_for_status()
-    return resp.json()["embeddings"]
+    """Embed a list of texts using local llama-cpp engine."""
+    from pile.models.engine import embed
+    return embed(texts)
 
 
 def _get_embeddings() -> dict[str, list[float]]:
@@ -268,10 +248,5 @@ def smart_route(query: str) -> str:
     if result:
         return result
 
-    # Phase 2: LLM classifier (if router model configured)
-    from pile.config import settings
-    if settings.router_model:
-        return route_query_with_llm(query)
-
-    # Phase 3: embedding similarity (last resort)
-    return route_query_with_embedding(query)
+    # Phase 2: LLM classifier (router model always available locally)
+    return route_query_with_llm(query)

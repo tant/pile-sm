@@ -269,7 +269,13 @@ async def main():
     else:
         print(f"Loaded {len(questions)} questions")
 
-    print("Initializing workflow...")
+    print("Initializing models and workflow...")
+    from pile.models.logging import setup_app_logger, setup_inference_logger
+    from pile.models.manager import ensure_models
+    setup_app_logger()
+    setup_inference_logger()
+    ensure_models()
+
     from pile.workflows.interactive import create_workflow
     from pile.cache import clear_cache
 
