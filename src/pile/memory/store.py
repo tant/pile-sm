@@ -28,24 +28,18 @@ def _get_client() -> chromadb.ClientAPI:
 
 
 def _embedding_fn() -> EmbeddingFunction:
-    """Return a cached embedding function based on LLM provider config."""
+    """Return a cached embedding function using local llama-cpp inference."""
     global _embed_fn
     if _embed_fn is not None:
         return _embed_fn
 
-    if settings.llm_provider == "openai":
-        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
-        _embed_fn = OpenAIEmbeddingFunction(
-            api_base=settings.openai_base_url,
-            api_key=settings.openai_api_key,
-            model_name=settings.embedding_model_id,
-        )
-    else:
-        from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
-        _embed_fn = OllamaEmbeddingFunction(
-            url=f"{settings.ollama_host}/api/embed",
-            model_name=settings.embedding_model_id,
-        )
+    from pile.models.engine import embed as local_embed
+
+    class LocalEmbeddingFunction(EmbeddingFunction):
+        def __call__(self, input: list[str]) -> list[list[float]]:
+            return local_embed(input)
+
+    _embed_fn = LocalEmbeddingFunction()
     return _embed_fn
 
 
