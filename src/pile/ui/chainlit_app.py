@@ -169,92 +169,98 @@ async def _handle_file_uploads(message: cl.Message) -> list[str]:
 
 
 async def _run_workflow_once(workflow, *, user_input: str | None = None, responses: dict | None = None):
-    """Stream a single workflow run, returning pending requests."""
+    """Stream a single workflow run, rendering steps in real-time."""
     import asyncio
 
     msg = cl.Message(content="", author="Pile SM")
     await msg.send()
 
-    pending_requests: list = []
     current_step: cl.Step | None = None
-    current_executor: str | None = None
+    active_tool_steps: dict[str, cl.Step] = {}  # tool_name -> step (for in-progress tools)
 
     if user_input is not None:
         run_iter = workflow.run(user_input, stream=True, include_status_events=True)
     else:
         run_iter = workflow.run(responses=responses, stream=True, include_status_events=True)
 
-    accumulated_text = ""
-
     try:
         async for event in run_iter:
             executor_id = getattr(event, "executor_id", None)
 
             if event.type == "executor_invoked" and executor_id:
-                # Log previous agent's accumulated output
-                if accumulated_text and current_executor:
-                    logger.info("[%s] %s", current_executor, accumulated_text[:200])
-                accumulated_text = ""
-
+                # Close previous agent step if any
                 if current_step:
-                    if current_step.output:
-                        await current_step.update()
-                    else:
-                        await current_step.remove()
+                    await current_step.update()
                     current_step = None
 
-                logger.info(">>> %s", executor_id)
-                current_executor = executor_id
                 cfg = AGENT_CONFIG.get(executor_id, {"type": "run", "label": executor_id})
                 current_step = cl.Step(name=cfg["label"], type=cfg["type"])
                 current_step.output = ""
-
-                if isinstance(event.data, str) and event.data:
-                    current_step.input = event.data
-
                 await current_step.send()
+
+            elif event.type == "data" and isinstance(event.data, dict):
+                # Tool events from workflow
+                tool_data = event.data
+
+                if tool_data.get("type") == "tool_start" and current_step:
+                    tool_name = tool_data["name"]
+                    tool_args = tool_data.get("args", {})
+                    tool_step = cl.Step(
+                        name=f"{tool_name} ({summarize_args(tool_args)})",
+                        type="tool",
+                        parent_id=current_step.id,
+                    )
+                    # input holds full args (visible when expanded)
+                    tool_step.input = str(tool_args) if tool_args else ""
+                    tool_step.output = ""
+                    await tool_step.send()
+                    active_tool_steps[tool_name] = tool_step
+
+                elif tool_data.get("type") == "tool_end":
+                    record = tool_data["record"]
+                    tool_name = record.name
+                    tool_step = active_tool_steps.pop(tool_name, None)
+                    if tool_step:
+                        duration = f"{record.duration_ms / 1000:.1f}s"
+                        tool_step.output = record.result or ""
+                        tool_step.name = f"{tool_name} — {duration}"
+                        await tool_step.update()
 
             elif event.type == "output":
                 text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
                 if text:
-                    accumulated_text += text
-                    if current_step and executor_id == current_executor:
+                    if current_step:
                         current_step.output += text
                     await msg.stream_token(text)
 
             elif event.type == "executor_completed":
-                if accumulated_text and executor_id:
-                    logger.info("[%s] %s", executor_id, accumulated_text[:200])
-                    accumulated_text = ""
-                if current_step and executor_id == current_executor:
-                    # Show tool calls made during this agent's execution
-                    tracker = cl.user_session.get("tracker")
-                    if tracker:
-                        for call in tracker.drain():
-                            tool_step = cl.Step(
-                                name=call.name,
-                                type="tool",
-                            )
-                            tool_step.input = str(call.arguments) if call.arguments else ""
-                            tool_step.output = call.result or ""
-                            tool_step.start = str(call.timestamp)
-                            await tool_step.send()
-                            await tool_step.update()
+                # Close any remaining tool steps
+                for tool_step in active_tool_steps.values():
+                    await tool_step.update()
+                active_tool_steps.clear()
 
-                    # Only show step if agent produced output
-                    if current_step.output:
-                        await current_step.update()
-                    else:
-                        await current_step.remove()
+                if current_step:
+                    await current_step.update()
                     current_step = None
-                    current_executor = None
+
+            elif event.type == "executor_failed":
+                if current_step:
+                    error_msg = str(event.data) if event.data else "Unknown error"
+                    current_step.output += f"\n\n*Error: {error_msg}*"
+                    await current_step.update()
+                    current_step = None
 
             elif event.type == "request_info":
-                pending_requests.append(event)
+                pass  # Not used in current routing workflow
 
-    except (asyncio.CancelledError, Exception) as e:
-        # Reset workflow running flag so next message can proceed
+    except asyncio.CancelledError:
         workflow._reset_running_flag()
+        # Close in-progress tool steps
+        for tool_step in active_tool_steps.values():
+            tool_step.output += "\n*Cancelled*"
+            await tool_step.update()
+        active_tool_steps.clear()
+        # Close agent step
         if current_step:
             if current_step.output:
                 current_step.output += "\n\n*Stopped by user*"
@@ -262,11 +268,18 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
             else:
                 await current_step.remove()
         if not msg.content:
-            msg.content = "*Stopped.*" if isinstance(e, asyncio.CancelledError) else f"*Error: {e}*"
+            msg.content = "*Stopped.*"
         await msg.update()
-        if not isinstance(e, asyncio.CancelledError):
-            raise
         return []
+    except Exception as e:
+        workflow._reset_running_flag()
+        if current_step:
+            current_step.output += f"\n\n*Error: {e}*"
+            await current_step.update()
+        if not msg.content:
+            msg.content = f"*Error: {e}*"
+        await msg.update()
+        raise
 
     if current_step:
         await current_step.update()
@@ -276,7 +289,7 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     # Auto-detect numeric data and render charts
     await _send_charts_if_any(msg)
 
-    return pending_requests
+    return []
 
 
 async def _send_charts_if_any(msg: cl.Message):
