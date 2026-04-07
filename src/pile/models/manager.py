@@ -29,10 +29,27 @@ def get_missing_models() -> list[str]:
     return [role for role in MODELS if not is_model_downloaded(role)]
 
 
-def download_models(roles: list[str] | None = None) -> None:
-    """Download missing models from HuggingFace with progress display."""
+def _download_single(role: str) -> None:
+    """Download a single model from HuggingFace. Supports auto-resume."""
     from huggingface_hub import hf_hub_download
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn
+
+    info = MODELS[role]
+    dest_dir = Path(MODELS_DIR) / role
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Downloading %s (%s, %.1f GB)...", role, info["filename"], info["size_gb"])
+    hf_hub_download(
+        repo_id=info["repo"],
+        filename=info["filename"],
+        local_dir=str(dest_dir),
+    )
+    logger.info("Downloaded %s.", role)
+
+
+def download_models(roles: list[str] | None = None) -> None:
+    """Download missing models from HuggingFace in parallel with progress display."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from rich.console import Console
 
     if roles is None:
         roles = get_missing_models()
@@ -40,31 +57,24 @@ def download_models(roles: list[str] | None = None) -> None:
         return
 
     total = len(roles)
-    logger.info("Downloading %d model(s) for first-time setup...", total)
+    console = Console()
+    console.print(f"[bold blue]Downloading {total} model(s) in parallel...[/]")
+    for role in roles:
+        info = MODELS[role]
+        console.print(f"  - {role}: {info['filename']} ({info['size_gb']:.1f} GB)")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        DownloadColumn(),
-    ) as progress:
-        for i, role in enumerate(roles, 1):
-            info = MODELS[role]
-            dest_dir = Path(MODELS_DIR) / role
-            dest_dir.mkdir(parents=True, exist_ok=True)
+    with ThreadPoolExecutor(max_workers=len(roles)) as pool:
+        futures = {pool.submit(_download_single, role): role for role in roles}
+        for future in as_completed(futures):
+            role = futures[future]
+            try:
+                future.result()
+                console.print(f"  [green]✓[/] {role} done")
+            except Exception as e:
+                console.print(f"  [red]✗[/] {role} failed: {e}")
+                raise
 
-            task = progress.add_task(
-                f"[{i}/{total}] {info['filename']} ({info['size_gb']:.1f} GB)",
-                total=None,
-            )
-            hf_hub_download(
-                repo_id=info["repo"],
-                filename=info["filename"],
-                local_dir=str(dest_dir),
-            )
-            progress.update(task, completed=True)
-
-    logger.info("All models downloaded.")
+    console.print("[bold green]All models downloaded.[/]")
 
 
 def _detect_gpu_layers() -> int:

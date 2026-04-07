@@ -1158,6 +1158,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/73/37/0d15d16150e1829f3e90962c99f28257f6de9e526a680b4c6f5acdb54fd2/huggingface_hub-1.9.0-py3-none-any.whl", hash = "sha256:2999328c058d39fd19ab748dd09bd4da2fbaa4f4c1ddea823eab103051e14a1f", size = 637355, upload-time = "2026-04-03T08:35:53.897Z" },
 ]
 
+[package.optional-dependencies]
+hf-xet = [
+    { name = "hf-xet" },
+]
+
 [[package]]
 name = "idna"
 version = "3.11"
@@ -2595,7 +2600,7 @@ dependencies = [
     { name = "chainlit" },
     { name = "chromadb" },
     { name = "httpx" },
-    { name = "huggingface-hub" },
+    { name = "huggingface-hub", extra = ["hf-xet"] },
     { name = "llama-cpp-python" },
     { name = "playwright" },
     { name = "plotly" },
@@ -2622,7 +2627,7 @@ requires-dist = [
     { name = "chainlit", marker = "extra == 'ui'", specifier = ">=2.0" },
     { name = "chromadb", specifier = ">=0.6" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "huggingface-hub", specifier = ">=0.25" },
+    { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.25" },
     { name = "llama-cpp-python", specifier = ">=0.3" },
     { name = "playwright", specifier = ">=1.40" },
     { name = "plotly", specifier = ">=5.0" },
