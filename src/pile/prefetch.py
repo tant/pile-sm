@@ -41,6 +41,10 @@ _SCRUM_PATTERNS: list[tuple[str, list[str]]] = [
         r"retro", r"retrospective",
         r"meeting\s+prep",
     ]),
+    ("cycle_time", [
+        r"cycle\s+time", r"lead\s+time", r"chu\s+k[yỳ]",
+        r"m[aấ]t\s+bao\s+l[aâ]u",
+    ]),
     ("data_quality", [
         r"data\s+quality", r"thi[eế]u\s+th[oô]ng\s+tin",
     ]),
@@ -65,6 +69,7 @@ def prefetch_scrum_data(query: str, board_id: int) -> str:
     """Fetch Jira data needed for a scrum query. Returns formatted data string."""
     from pile.tools.jira_tools import (
         jira_get_board,
+        jira_get_changelog,
         jira_get_sprint,
         jira_get_sprint_issues,
         jira_search,
@@ -122,6 +127,14 @@ def prefetch_scrum_data(query: str, board_id: int) -> str:
             max_results=20,
         ))
 
+    elif qtype == "cycle_time":
+        if sprint_id:
+            parts.append(_safe_call(jira_get_sprint_issues, sprint_id=sprint_id))
+        # Fetch changelog for recently Done issues to calculate time per status
+        done_keys = _get_done_issue_keys(sprint_id)
+        for key in done_keys[:5]:  # limit to 5 to avoid too much data
+            parts.append(_safe_call(jira_get_changelog, issue_key=key))
+
     elif qtype == "data_quality":
         if sprint_id:
             parts.append(_safe_call(jira_get_sprint_issues, sprint_id=sprint_id))
@@ -157,6 +170,24 @@ def _get_active_sprint_id(board_id: int) -> int | None:
     except Exception as e:
         logger.warning("Failed to get active sprint ID: %s", e)
     return None
+
+
+def _get_done_issue_keys(sprint_id: int | None) -> list[str]:
+    """Extract issue keys with status Done from a sprint."""
+    if not sprint_id:
+        return []
+    try:
+        from pile.tools.jira_tools import _jira_client
+        client = _jira_client()
+        resp = client.get(
+            f"/rest/agile/1.0/sprint/{sprint_id}/issue",
+            params={"maxResults": 50, "fields": "status", "jql": "status = Done"},
+        )
+        resp.raise_for_status()
+        issues = resp.json().get("issues", [])
+        return [i["key"] for i in issues]
+    except Exception:
+        return []
 
 
 def _project_key() -> str:

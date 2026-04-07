@@ -39,6 +39,10 @@ _ROUTES: list[tuple[str, list[str]]] = [
         r"cho\s+t[oô]i\s+l[eệ]nh", r"curl\b", r"l[eệ]nh\s+l[aấ]y",
         r"changelog\b", r"l[iị]ch\s+s[uử]",
     ]),
+    # Jira status filter — "In Progress", "Code Review", "To Do", "Done" = listing issues
+    ("jira_query", [
+        r"in\s+progress", r"code\s+review", r"to\s+do\b",
+    ]),
     # Jira write — only when user explicitly wants to MODIFY something
     ("jira_write", [
         r"t[aạ]o\s+(issue|bug|task|story|epic|ticket)",
