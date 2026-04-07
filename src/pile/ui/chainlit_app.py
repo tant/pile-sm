@@ -12,6 +12,24 @@ from pile.workflows.interactive import create_workflow
 
 logger = logging.getLogger("pile.ui")
 
+
+def summarize_args(args: dict, max_keys: int = 3, max_val_len: int = 30) -> str:
+    """Summarize tool arguments for display: 'key=val, key=val, +N more'."""
+    if not args:
+        return ""
+    items = list(args.items())[:max_keys]
+    parts = []
+    for k, v in items:
+        v_str = str(v)
+        if len(v_str) > max_val_len:
+            v_str = v_str[:max_val_len] + "..."
+        parts.append(f"{k}={v_str}")
+    summary = ", ".join(parts)
+    if len(args) > max_keys:
+        summary += f", +{len(args) - max_keys} more"
+    return summary
+
+
 # Agent display config
 AGENT_CONFIG = {
     "TriageAgent": {"type": "run", "label": "Routing"},
