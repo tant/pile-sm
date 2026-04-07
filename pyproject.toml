@@ -7,8 +7,9 @@ authors = [{name = "Tan Tran", email = "me@tantran.dev"}]
 requires-python = ">=3.11"
 
 dependencies = [
-    "agent-framework-ollama",
-    "agent-framework-openai>=1.0.0",
+    "llama-cpp-python>=0.3",
+    "huggingface-hub>=0.25",
+    "rich>=13.0",
     "agent-framework-orchestrations>=1.0.0b260402",
     "chainlit>=2.10.1",
     "httpx>=0.27",
