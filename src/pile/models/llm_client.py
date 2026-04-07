@@ -143,7 +143,15 @@ class LlamaCppClient(
             validated = await self._validate_options(options)
             dicts = _messages_to_dicts(messages)
 
-            tools = validated.get("tools")
+            # Convert MAF FunctionTool objects to OpenAI-compatible dicts
+            raw_tools = validated.get("tools")
+            tools = None
+            if raw_tools:
+                tools = [
+                    t.to_json_schema_spec() if hasattr(t, "to_json_schema_spec") else t
+                    for t in raw_tools
+                ]
+
             max_tokens = validated.get("max_tokens", 2048)
             temperature = validated.get("temperature", 0.7)
 

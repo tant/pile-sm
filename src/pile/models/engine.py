@@ -32,11 +32,18 @@ def chat_completion(
     model = _get_agent_model()
     start = time.monotonic()
 
+    tool_names = None
+    if tools:
+        tool_names = [
+            t["function"]["name"] if isinstance(t, dict) else getattr(t, "name", str(t))
+            for t in tools
+        ]
+
     log_inference_detail(
         role="agent",
         direction="request",
         content=json.dumps(
-            {"messages": messages, "tools": [t["function"]["name"] for t in tools] if tools else None},
+            {"messages": messages, "tools": tool_names},
             ensure_ascii=False, indent=2,
         ),
     )
