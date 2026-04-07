@@ -40,6 +40,15 @@ def setup_inference_logger() -> logging.Logger:
     ))
     logger.addHandler(file_handler)
 
+    # Console handler — same level, same format
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logger.addHandler(console_handler)
+
     _logger = logger
     return logger
 
