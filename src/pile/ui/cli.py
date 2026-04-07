@@ -6,6 +6,8 @@ import asyncio
 import logging
 import sys
 
+from pile.models.logging import setup_inference_logger
+from pile.models.manager import ensure_models
 from pile.workflows.interactive import create_workflow
 
 
@@ -99,6 +101,9 @@ async def _run():
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    setup_inference_logger()
+    ensure_models()  # Downloads missing models on first run, then loads all
 
     # Health checks
     from pile.health import run_health_checks
