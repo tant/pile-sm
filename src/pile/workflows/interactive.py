@@ -161,6 +161,8 @@ class RoutedWorkflow:
         self._is_running = False
         self._sessions: dict = {}
         self.last_agent_key: str = ""
+        self._last_full_text: str = ""
+        self._last_tool_calls: list = []
 
     def _get_session(self, agent_key: str):
         """Get or create a session for an agent (keeps conversation history)."""
@@ -196,6 +198,20 @@ class RoutedWorkflow:
             yield update
         await result_stream.get_final_response()
 
+    async def _drain_tool_queue(self, tool_events: asyncio.Queue, agent_name: str):
+        """Drain pending tool events from queue, yielding WorkflowEvents."""
+        from agent_framework._workflows._events import WorkflowEvent
+        # empty() is reliable here: single event loop thread, no concurrent producers
+        while not tool_events.empty():
+            try:
+                evt = tool_events.get_nowait()
+                if evt[0] == "tool_start":
+                    yield WorkflowEvent.emit(agent_name, {"type": "tool_start", "name": evt[1], "args": evt[2]})
+                elif evt[0] == "tool_end":
+                    yield WorkflowEvent.emit(agent_name, {"type": "tool_end", "record": evt[1]})
+            except asyncio.QueueEmpty:
+                break
+
     async def _stream_agent_events(self, agent_key: str, message: str, tool_events: asyncio.Queue):
         """Stream an agent run, yielding WorkflowEvents for text and tool calls.
 
@@ -213,38 +229,23 @@ class RoutedWorkflow:
         self._last_full_text = ""
 
         async for update in self._execute_agent(agent_key, message):
-            # Drain tool events that arrived during this iteration
-            while not tool_events.empty():
-                try:
-                    evt = tool_events.get_nowait()
-                    if evt[0] == "tool_start":
-                        yield WorkflowEvent.emit(agent_name, {"type": "tool_start", "name": evt[1], "args": evt[2]})
-                    elif evt[0] == "tool_end":
-                        yield WorkflowEvent.emit(agent_name, {"type": "tool_end", "record": evt[1]})
-                except asyncio.QueueEmpty:
-                    break
+            async for evt in self._drain_tool_queue(tool_events, agent_name):
+                yield evt
 
             if update.text:
                 self._last_full_text += update.text
                 yield WorkflowEvent.output(agent_name, update)
 
         # Drain remaining tool events after stream ends
-        while not tool_events.empty():
-            try:
-                evt = tool_events.get_nowait()
-                if evt[0] == "tool_start":
-                    yield WorkflowEvent.emit(agent_name, {"type": "tool_start", "name": evt[1], "args": evt[2]})
-                elif evt[0] == "tool_end":
-                    yield WorkflowEvent.emit(agent_name, {"type": "tool_end", "record": evt[1]})
-            except asyncio.QueueEmpty:
-                break
+        async for evt in self._drain_tool_queue(tool_events, agent_name):
+            yield evt
 
         self._last_tool_calls = self.tracker.drain()
 
     async def _run_query(self, message: str, stream: bool = False):
         """Route and execute a user query, with recovery on failure."""
         from agent_framework._workflows._events import WorkflowEvent
-        from agent_framework._types import AgentResponseUpdate, Content
+        from agent_framework._types import AgentResponseUpdate
 
         self._is_running = True
         agent_name = "unknown"
