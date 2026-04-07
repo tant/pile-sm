@@ -107,7 +107,6 @@ def load_model(role: str) -> Llama:
             model_path=str(path),
             n_ctx=settings.agent_max_tokens,
             n_gpu_layers=gpu_layers,
-            chat_format="chatml-function-calling",
             verbose=False,
         )
     elif role == "router":

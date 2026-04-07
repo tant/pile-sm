@@ -65,6 +65,24 @@ def _messages_to_dicts(messages: Sequence[Message]) -> list[dict[str, Any]]:
     return result
 
 
+def _parse_xml_tool_calls(text: str) -> list[dict[str, Any]]:
+    """Parse Qwen-style XML tool calls from model output text.
+
+    Format: <tool_call><function=name><parameter=key>value</parameter></function></tool_call>
+    Returns list of {"name": ..., "arguments": {...}} dicts.
+    """
+    import re
+    calls = []
+    for block in re.finditer(r"<tool_call>\s*<function=(\w+)>(.*?)</function>\s*</tool_call>", text, re.DOTALL):
+        name = block.group(1)
+        params_text = block.group(2)
+        args = {}
+        for param in re.finditer(r"<parameter=(\w+)>\s*(.*?)\s*</parameter>", params_text, re.DOTALL):
+            args[param.group(1)] = param.group(2)
+        calls.append({"name": name, "arguments": args})
+    return calls
+
+
 def _parse_response(raw: dict[str, Any]) -> ChatResponse:
     """Convert a llama-cpp OpenAI-compatible response dict into a ChatResponse."""
     choice = raw["choices"][0]
@@ -72,12 +90,9 @@ def _parse_response(raw: dict[str, Any]) -> ChatResponse:
     finish = choice.get("finish_reason", "stop")
 
     contents: list[Content] = []
+    text = message.get("content") or ""
 
-    # Text content
-    if message.get("content"):
-        contents.append(Content.from_text(message["content"]))
-
-    # Tool calls
+    # Check for structured tool_calls first (chatml-function-calling format)
     for tc in message.get("tool_calls", []) or []:
         fn = tc["function"]
         contents.append(
@@ -88,6 +103,27 @@ def _parse_response(raw: dict[str, Any]) -> ChatResponse:
             )
         )
         finish = "tool_calls"
+
+    # If no structured tool calls, parse XML tool calls from text (Qwen native format)
+    if not contents and "<tool_call>" in text:
+        xml_calls = _parse_xml_tool_calls(text)
+        for i, call in enumerate(xml_calls):
+            import json as _json
+            contents.append(
+                Content.from_function_call(
+                    call_id=f"call_{i}_{call['name']}",
+                    name=call["name"],
+                    arguments=_json.dumps(call["arguments"]),
+                )
+            )
+        finish = "tool_calls"
+        # Remove tool_call XML from text, keep any remaining text
+        import re
+        remaining = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL).strip()
+        if remaining:
+            contents.insert(0, Content.from_text(remaining))
+    elif text:
+        contents.append(Content.from_text(text))
 
     usage = raw.get("usage", {})
     usage_details: UsageDetails = {

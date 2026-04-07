@@ -22,6 +22,17 @@ def _get_embed_model():
     return get_embed_model()
 
 
+def _inject_no_think(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prepend /no_think to system message to disable Qwen thinking mode."""
+    result = []
+    for msg in messages:
+        if msg.get("role") == "system" and not msg.get("content", "").startswith("/no_think"):
+            result.append({**msg, "content": f"/no_think\n{msg.get('content', '')}"})
+        else:
+            result.append(msg)
+    return result
+
+
 def chat_completion(
     messages: list[dict[str, Any]],
     tools: list[dict] | None = None,
@@ -30,6 +41,7 @@ def chat_completion(
 ) -> dict:
     """Run chat completion on the agent model. Returns OpenAI-compatible dict."""
     model = _get_agent_model()
+    messages = _inject_no_think(messages)
     start = time.monotonic()
 
     tool_names = None
