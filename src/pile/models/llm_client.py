@@ -142,6 +142,33 @@ def _parse_response(raw: dict[str, Any]) -> ChatResponse:
     )
 
 
+def _parse_stream_output(text: str) -> list[Content]:
+    """Parse accumulated stream text into Content list, handling tool call XML."""
+    import re
+    import json as _json
+
+    tool_contents: list[Content] = []
+    remaining = text
+
+    if "<tool_call>" in text:
+        xml_calls = _parse_xml_tool_calls(text)
+        for i, call in enumerate(xml_calls):
+            tool_contents.append(
+                Content.from_function_call(
+                    call_id=f"call_{i}_{call['name']}",
+                    name=call["name"],
+                    arguments=_json.dumps(call["arguments"]),
+                )
+            )
+        remaining = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL).strip()
+
+    contents: list[Content] = []
+    if remaining:
+        contents.append(Content.from_text(remaining))
+    contents.extend(tool_contents)
+    return contents
+
+
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
@@ -214,7 +241,9 @@ class LlamaCppClient(
         """Stream chat completion tokens from llama-cpp-python.
 
         Bridges the sync generator from llama-cpp to async by running it
-        in a thread and feeding chunks through an asyncio.Queue.
+        in a thread and feeding chunks via blocking queue.get() in executor.
+        Buffers text that looks like tool call XML to prevent leaking raw
+        markup to the UI.
         """
         import queue as thread_queue
 
@@ -233,7 +262,6 @@ class LlamaCppClient(
             max_tokens = validated.get("max_tokens", 2048)
             temperature = validated.get("temperature", 0.7)
 
-            # Bridge sync generator → async via thread + queue
             q: thread_queue.Queue = thread_queue.Queue()
             _sentinel = object()
 
@@ -252,13 +280,14 @@ class LlamaCppClient(
                     q.put(_sentinel)
 
             loop = asyncio.get_event_loop()
-            loop.run_in_executor(None, _produce)
+            fut = loop.run_in_executor(None, _produce)
+
+            # Buffer for detecting <tool_call> XML blocks
+            xml_buffer = ""
+            in_tool_call = False
 
             while True:
-                # Poll queue without blocking the event loop
-                while q.empty():
-                    await asyncio.sleep(0.01)
-                item = q.get_nowait()
+                item = await loop.run_in_executor(None, q.get)
                 if item is _sentinel:
                     break
                 if isinstance(item, Exception):
@@ -268,42 +297,66 @@ class LlamaCppClient(
                 delta = choice.get("delta", {})
                 text = delta.get("content")
                 if text:
+                    # Buffer text that might be part of <tool_call> XML
+                    xml_buffer += text
+                    if not in_tool_call and "<tool_call>" in xml_buffer:
+                        # Flush any text before the tag
+                        idx = xml_buffer.index("<tool_call>")
+                        pre = xml_buffer[:idx]
+                        if pre:
+                            yield ChatResponseUpdate(
+                                contents=[Content.from_text(pre)],
+                                role="assistant",
+                            )
+                        xml_buffer = xml_buffer[idx:]
+                        in_tool_call = True
+                    elif not in_tool_call and "<" in xml_buffer:
+                        # Might be start of a tag — hold buffer
+                        # But flush if buffer is large and no tag forming
+                        if len(xml_buffer) > 20 and "<tool_call>" not in xml_buffer:
+                            yield ChatResponseUpdate(
+                                contents=[Content.from_text(xml_buffer)],
+                                role="assistant",
+                            )
+                            xml_buffer = ""
+                    elif not in_tool_call:
+                        yield ChatResponseUpdate(
+                            contents=[Content.from_text(xml_buffer)],
+                            role="assistant",
+                        )
+                        xml_buffer = ""
+
+                    # If in tool_call, keep buffering until </tool_call>
+                    if in_tool_call and "</tool_call>" in xml_buffer:
+                        # Discard the complete tool_call block (finalizer handles it)
+                        import re
+                        remaining = re.sub(
+                            r"<tool_call>.*?</tool_call>", "", xml_buffer, flags=re.DOTALL
+                        )
+                        xml_buffer = remaining
+                        in_tool_call = "<tool_call>" in xml_buffer
+
+            # Flush remaining non-tool-call buffer
+            if xml_buffer and not in_tool_call:
+                import re
+                clean = re.sub(r"<tool_call>.*?</tool_call>", "", xml_buffer, flags=re.DOTALL).strip()
+                if clean:
                     yield ChatResponseUpdate(
-                        contents=[Content.from_text(text)],
+                        contents=[Content.from_text(clean)],
                         role="assistant",
-                        finish_reason=choice.get("finish_reason"),
                     )
+
+            # Check for thread errors
+            if fut.done() and fut.exception():
+                raise fut.exception()
 
         def _finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             all_text = "".join(
                 c.text for u in updates for c in (u.contents or [])
                 if c.type == "text" and c.text
             )
-            # Parse tool calls from accumulated text
-            tool_contents = []
-            remaining_text = all_text
-            if "<tool_call>" in all_text:
-                xml_calls = _parse_xml_tool_calls(all_text)
-                for i, call in enumerate(xml_calls):
-                    import json as _json
-                    tool_contents.append(
-                        Content.from_function_call(
-                            call_id=f"call_{i}_{call['name']}",
-                            name=call["name"],
-                            arguments=_json.dumps(call["arguments"]),
-                        )
-                    )
-                import re
-                remaining_text = re.sub(
-                    r"<tool_call>.*?</tool_call>", "", all_text, flags=re.DOTALL
-                ).strip()
-
-            contents = []
-            if remaining_text:
-                contents.append(Content.from_text(remaining_text))
-            contents.extend(tool_contents)
-
-            finish = "tool_calls" if tool_contents else "stop"
+            contents = _parse_stream_output(all_text)
+            finish = "tool_calls" if any(c.type == "function_call" for c in contents) else "stop"
             return ChatResponse(
                 messages=Message("assistant", contents),
                 finish_reason=finish,

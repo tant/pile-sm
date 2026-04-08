@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from agent_framework import FunctionMiddleware, FunctionInvocationContext
@@ -36,7 +37,11 @@ class ToolCallTracker(FunctionMiddleware):
             print(f"{call.name}({call.arguments}) -> {call.result} [{call.duration_ms}ms]")
     """
 
-    def __init__(self, on_tool_start=None, on_tool_end=None):
+    def __init__(
+        self,
+        on_tool_start: Callable[[str, dict], Awaitable[None]] | None = None,
+        on_tool_end: Callable[[ToolCallRecord], Awaitable[None]] | None = None,
+    ):
         self._calls: list[ToolCallRecord] = []
         self._seen_tools: dict[str, int] = {}  # tool_name → call count
         self.on_tool_start = on_tool_start

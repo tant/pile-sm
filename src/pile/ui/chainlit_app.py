@@ -176,7 +176,7 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     await msg.send()
 
     current_step: cl.Step | None = None
-    active_tool_steps: dict[str, cl.Step] = {}  # tool_name -> step (for in-progress tools)
+    active_tool_steps: dict[str, list[cl.Step]] = {}  # tool_name -> [steps] (FIFO, handles duplicate calls)
 
     if user_input is not None:
         run_iter = workflow.run(user_input, stream=True, include_status_events=True)
@@ -214,12 +214,15 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                     tool_step.input = str(tool_args) if tool_args else ""
                     tool_step.output = ""
                     await tool_step.send()
-                    active_tool_steps[tool_name] = tool_step
+                    active_tool_steps.setdefault(tool_name, []).append(tool_step)
 
                 elif tool_data.get("type") == "tool_end":
                     record = tool_data["record"]
                     tool_name = record.name
-                    tool_step = active_tool_steps.pop(tool_name, None)
+                    steps = active_tool_steps.get(tool_name, [])
+                    tool_step = steps.pop(0) if steps else None
+                    if not steps:
+                        active_tool_steps.pop(tool_name, None)
                     if tool_step:
                         duration = f"{record.duration_ms / 1000:.1f}s"
                         tool_step.output = record.result or ""
@@ -235,8 +238,9 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
 
             elif event.type == "executor_completed":
                 # Close any remaining tool steps
-                for tool_step in active_tool_steps.values():
-                    await tool_step.update()
+                for steps in active_tool_steps.values():
+                    for tool_step in steps:
+                        await tool_step.update()
                 active_tool_steps.clear()
 
                 if current_step:
@@ -256,9 +260,10 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     except asyncio.CancelledError:
         workflow._reset_running_flag()
         # Close in-progress tool steps
-        for tool_step in active_tool_steps.values():
-            tool_step.output += "\n*Cancelled*"
-            await tool_step.update()
+        for steps in active_tool_steps.values():
+            for tool_step in steps:
+                tool_step.output += "\n*Cancelled*"
+                await tool_step.update()
         active_tool_steps.clear()
         # Close agent step
         if current_step:
