@@ -164,6 +164,9 @@ def main():
         asyncio.run(_run())
     except KeyboardInterrupt:
         print("\nBye!")
+    finally:
+        from pile.models.manager import unload_all
+        unload_all()
 
 
 if __name__ == "__main__":
