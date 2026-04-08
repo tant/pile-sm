@@ -178,12 +178,22 @@ async def _handle_file_uploads(message: cl.Message) -> list[str]:
 
 
 async def _run_workflow_once(workflow, *, user_input: str | None = None, responses: dict | None = None):
-    """Stream a single workflow run, rendering steps in real-time."""
+    """Stream a single workflow run, rendering steps in real-time.
+
+    Layout: one root "Thinking" step (collapsed) containing all agent/tool
+    sub-steps, then the final answer as a separate message below.
+    """
     import asyncio
 
-    current_step: cl.Step | None = None
-    active_tool_steps: dict[str, list[cl.Step]] = {}  # tool_name -> [steps] (FIFO, handles duplicate calls)
-    final_text = ""  # Accumulate answer text, send as message AFTER all steps
+    # One root step that contains everything — collapsed by default
+    root_step = cl.Step(name="Thinking", type="tool")
+    root_step.output = ""
+    await root_step.send()
+
+    current_agent_step: cl.Step | None = None
+    active_tool_steps: dict[str, list[cl.Step]] = {}
+    final_text = ""
+    agents_used: list[str] = []
 
     if user_input is not None:
         run_iter = workflow.run(user_input, stream=True, include_status_events=True)
@@ -195,29 +205,30 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
             executor_id = getattr(event, "executor_id", None)
 
             if event.type == "executor_invoked" and executor_id:
-                # Close previous agent step if any
-                if current_step:
-                    await current_step.update()
-                    current_step = None
+                if current_agent_step:
+                    await current_agent_step.update()
+                    current_agent_step = None
 
                 cfg = AGENT_CONFIG.get(executor_id, {"type": "run", "label": executor_id})
-                current_step = cl.Step(name=cfg["label"], type=cfg["type"])
-                current_step.output = ""
-                await current_step.send()
+                agents_used.append(cfg["label"])
+                current_agent_step = cl.Step(
+                    name=cfg["label"], type="tool",
+                    parent_id=root_step.id,
+                )
+                current_agent_step.output = ""
+                await current_agent_step.send()
 
             elif event.type == "data" and isinstance(event.data, dict):
-                # Tool events from workflow
                 tool_data = event.data
 
-                if tool_data.get("type") == "tool_start" and current_step:
+                if tool_data.get("type") == "tool_start" and current_agent_step:
                     tool_name = tool_data["name"]
                     tool_args = tool_data.get("args", {})
                     tool_step = cl.Step(
                         name=f"{tool_name} ({summarize_args(tool_args)})",
                         type="tool",
-                        parent_id=current_step.id,
+                        parent_id=current_agent_step.id,
                     )
-                    # input holds full args (visible when expanded)
                     tool_step.input = str(tool_args) if tool_args else ""
                     tool_step.output = ""
                     await tool_step.send()
@@ -239,7 +250,10 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                 elif tool_data.get("type") == "recalled_context":
                     facts = tool_data.get("facts", [])
                     if facts:
-                        recall_step = cl.Step(name="Recalled from previous sessions", type="run")
+                        recall_step = cl.Step(
+                            name="Recalled from previous sessions", type="tool",
+                            parent_id=root_step.id,
+                        )
                         recall_step.output = "\n".join(f"- {f}" for f in facts)
                         await recall_step.send()
                         await recall_step.update()
@@ -248,59 +262,62 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                 text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
                 if text:
                     final_text += text
-                    if current_step:
-                        current_step.output += text
+                    if current_agent_step:
+                        current_agent_step.output += text
 
             elif event.type == "executor_completed":
-                # Close any remaining tool steps
                 for steps in active_tool_steps.values():
                     for tool_step in steps:
                         await tool_step.update()
                 active_tool_steps.clear()
 
-                if current_step:
-                    await current_step.update()
-                    current_step = None
+                if current_agent_step:
+                    await current_agent_step.update()
+                    current_agent_step = None
 
             elif event.type == "executor_failed":
-                if current_step:
+                if current_agent_step:
                     error_msg = str(event.data) if event.data else "Unknown error"
-                    current_step.output += f"\n\n*Error: {error_msg}*"
-                    await current_step.update()
-                    current_step = None
-
-            elif event.type == "request_info":
-                pass  # Not used in current routing workflow
+                    current_agent_step.output += f"\n\n*Error: {error_msg}*"
+                    await current_agent_step.update()
+                    current_agent_step = None
 
     except asyncio.CancelledError:
         workflow._reset_running_flag()
-        # Close in-progress tool steps
         for steps in active_tool_steps.values():
             for tool_step in steps:
                 tool_step.output += "\n*Cancelled*"
                 await tool_step.update()
         active_tool_steps.clear()
-        # Close agent step
-        if current_step:
-            if current_step.output:
-                current_step.output += "\n\n*Stopped by user*"
-                await current_step.update()
+        if current_agent_step:
+            if current_agent_step.output:
+                current_agent_step.output += "\n\n*Stopped by user*"
+                await current_agent_step.update()
             else:
-                await current_step.remove()
+                await current_agent_step.remove()
+        root_step.name = "Stopped"
+        await root_step.update()
         await cl.Message(content=final_text or "*Stopped.*", author="Pile SM").send()
         return []
     except Exception as e:
         workflow._reset_running_flag()
-        if current_step:
-            current_step.output += f"\n\n*Error: {e}*"
-            await current_step.update()
+        if current_agent_step:
+            current_agent_step.output += f"\n\n*Error: {e}*"
+            await current_agent_step.update()
+        root_step.name = "Error"
+        await root_step.update()
         await cl.Message(content=final_text or f"*Error: {e}*", author="Pile SM").send()
         raise
 
-    if current_step:
-        await current_step.update()
+    if current_agent_step:
+        await current_agent_step.update()
 
-    # Send final answer AFTER all steps — appears at the bottom
+    # Update root step summary
+    summary = ", ".join(agents_used) if agents_used else "Done"
+    root_step.name = f"Used {summary}"
+    await root_step.update()
+
+    # Send final answer AFTER root step — appears at the bottom
     if final_text:
         msg = cl.Message(content=final_text, author="Pile SM")
         await msg.send()
