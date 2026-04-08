@@ -104,6 +104,15 @@ async def on_chat_start():
         warning = "**Health check warnings:**\n" + "\n".join(f"- {e}" for e in errors)
         await cl.Message(content=warning).send()
 
+    # Clean up expired session facts
+    try:
+        from pile.memory.store import cleanup_expired_facts
+        removed = cleanup_expired_facts(max_age_days=7)
+        if removed:
+            logger.info("Cleaned up %d expired session facts", removed)
+    except Exception:
+        pass
+
     try:
         workflow, tracker = create_workflow()
     except Exception as e:
@@ -229,6 +238,14 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                         tool_step.name = f"{tool_name} — {duration}"
                         await tool_step.update()
 
+                elif tool_data.get("type") == "recalled_context":
+                    facts = tool_data.get("facts", [])
+                    if facts:
+                        recall_step = cl.Step(name="Recalled from previous sessions", type="run")
+                        recall_step.output = "\n".join(f"- {f}" for f in facts)
+                        await recall_step.send()
+                        await recall_step.update()
+
             elif event.type == "output":
                 text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
                 if text:
@@ -293,6 +310,24 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
 
     # Auto-detect numeric data and render charts
     await _send_charts_if_any(msg)
+
+    # Background: extract and persist key facts from this turn
+    if user_input and msg.content and len(msg.content) >= 50:
+        from pile.context import summarize_turn
+
+        async def _bg_summarize():
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    summarize_turn,
+                    user_input,
+                    msg.content,
+                )
+            except Exception:
+                pass  # Never break the response flow
+
+        asyncio.create_task(_bg_summarize())
 
     return []
 
