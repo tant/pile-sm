@@ -92,6 +92,24 @@ def delete_memory(memory_id: str) -> bool:
         return False
 
 
+def cleanup_expired_facts(max_age_days: int = 7) -> int:
+    """Delete session_fact memories older than max_age_days. Returns count deleted."""
+    col = _memories_collection()
+    results = col.get(where={"type": "session_fact"}, include=["metadatas"])
+    if not results["ids"]:
+        return 0
+
+    cutoff = time.time() - (max_age_days * 86400)
+    expired_ids = [
+        results["ids"][i]
+        for i, meta in enumerate(results["metadatas"])
+        if meta.get("created_at", 0) < cutoff
+    ]
+    if expired_ids:
+        col.delete(ids=expired_ids)
+    return len(expired_ids)
+
+
 def search_memories(query: str, n_results: int = 5) -> list[dict[str, Any]]:
     """Semantic search in memories collection."""
     col = _memories_collection()
