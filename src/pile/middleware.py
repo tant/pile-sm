@@ -44,6 +44,7 @@ class ToolCallTracker(FunctionMiddleware):
     ):
         self._calls: list[ToolCallRecord] = []
         self._seen_tools: dict[str, int] = {}  # tool_name → call count
+        self._seen_exact: set[str] = set()  # "tool_name|args_hash" for exact dupe detection
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
 
@@ -51,27 +52,30 @@ class ToolCallTracker(FunctionMiddleware):
         args = dict(context.arguments) if hasattr(context.arguments, '__iter__') else {}
         tool_name = context.function.name
 
-        # Loop detection: same tool called 2+ times in one agent run
+        # Loop detection: block exact duplicate calls (same tool + same args)
+        # or same tool called 4+ times (even with different args)
+        call_key = f"{tool_name}|{sorted(args.items())}"
         count = self._seen_tools.get(tool_name, 0)
-        if count >= 2:
-            logger.warning(
-                "LOOP DETECTED: %s called %d times already — blocking",
-                tool_name, count,
-            )
+        is_exact_dupe = call_key in self._seen_exact
+
+        if is_exact_dupe or count >= 3:
+            reason = "exact same call" if is_exact_dupe else f"called {count} times"
+            logger.warning("LOOP DETECTED: %s (%s) — blocking", tool_name, reason)
             record = ToolCallRecord(
                 name=tool_name,
                 arguments=args,
-                result="Error: tool called too many times.",
+                result=f"Error: tool loop detected ({reason}).",
                 duration_ms=0,
                 timestamp=time.time(),
             )
             self._calls.append(record)
             if self.on_tool_end:
                 await self.on_tool_end(record)
-            context.result = f"You already called {tool_name} {count} times. Stop calling tools and analyze the data you have."
+            context.result = f"Loop detected: {tool_name} ({reason}). Analyze the data you already have."
             return
 
         self._seen_tools[tool_name] = count + 1
+        self._seen_exact.add(call_key)
 
         record = ToolCallRecord(
             name=context.function.name,
@@ -104,6 +108,7 @@ class ToolCallTracker(FunctionMiddleware):
         calls = self._calls[:]
         self._calls.clear()
         self._seen_tools.clear()
+        self._seen_exact.clear()
         return calls
 
     @property
