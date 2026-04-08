@@ -35,7 +35,7 @@ description = "Local Scrum Master assistant with Jira & Git integration"
 default_theme = "dark"
 layout = "wide"
 confirm_new_chat = true
-cot = "full"
+cot = "tool_call"
 alert_style = "modern"
 custom_css = "/public/theme.css"
 
