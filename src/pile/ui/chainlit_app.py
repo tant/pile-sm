@@ -314,7 +314,7 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
 
     # Update root step summary
     summary = ", ".join(agents_used) if agents_used else "Done"
-    root_step.name = f"Used {summary}"
+    root_step.name = summary
     await root_step.update()
 
     # Send final answer AFTER root step — appears at the bottom
