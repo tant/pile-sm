@@ -149,6 +149,10 @@ def prefetch_scrum_data(query: str, board_id: int) -> str:
     if not data:
         data = "No data could be fetched. Respond based on your knowledge."
 
+    # Truncate to keep within model's effective attention span
+    if len(data) > 3000:
+        data = data[:3000] + "\n\n[... truncated]"
+
     logger.info("Prefetch: %d chars of data fetched", len(data))
     return data
 

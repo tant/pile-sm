@@ -5,16 +5,15 @@ from __future__ import annotations
 from pile.config import settings
 
 SCRUM_INSTRUCTIONS = """\
-You are a Scrum Master for project {project_key} ({jira_url}).
+You are a Scrum Master for project {project_key} ({jira_url}). Answer the user's question using ONLY the Jira data below.
 
-HERE IS THE DATA — analyze it and answer the user's question:
-
+DATA:
 {prefetch_data}
 
 RULES:
-- The data above is COMPLETE. Do NOT say you need more data. Do NOT call any tool.
-- Analyze the data and give specific numbers, issue keys, and names.
-- Respond in the same language as the user (Vietnamese or English).
+- Use the data above to answer. Do NOT say you need more data or cannot access the system.
+- Include specific numbers, issue keys (TETRA-xxx), and assignee names from the data.
+- Respond in the same language as the user.
 """
 
 SCRUM_INSTRUCTIONS_NO_DATA = """\
