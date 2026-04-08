@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import logging
 
-from pile.config import settings
-from pile.client import call_router_model
-
 logger = logging.getLogger("pile.context")
 
 # ChromaDB cosine distance thresholds [0, 2]. Lower = more similar.
@@ -106,7 +103,7 @@ EXTRACT_PROMPT = (
 
 _SKIP_AGENTS = {"TriageAgent"}
 
-MIN_RESPONSE_LENGTH = 20
+MIN_RESPONSE_LENGTH = 50
 
 
 def summarize_turn(user_msg: str, agent_text: str, agent_name: str = "") -> None:
@@ -116,6 +113,7 @@ def summarize_turn(user_msg: str, agent_text: str, agent_name: str = "") -> None
     or router returns NONE. Deduplicates against existing memories.
     """
     try:
+        from pile.config import settings
         if not settings.memory_enabled:
             return
 
@@ -125,6 +123,7 @@ def summarize_turn(user_msg: str, agent_text: str, agent_name: str = "") -> None
         if agent_name in _SKIP_AGENTS:
             return
 
+        from pile.client import call_router_model
         prompt = EXTRACT_PROMPT.format(user_msg=user_msg[:500], agent_text=agent_text[:1500])
         result = call_router_model(prompt, max_tokens=200)
 
@@ -158,6 +157,7 @@ def recall_facts(query: str, n_results: int = 5) -> list[str]:
     Filters by RECALL_MAX_DISTANCE. Used by UI to show recalled context.
     """
     try:
+        from pile.config import settings
         if not settings.memory_enabled:
             return []
 

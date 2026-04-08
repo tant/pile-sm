@@ -14,15 +14,15 @@ def test_summarize_turn_extracts_facts():
         stored.append(content)
         return f"mem_{len(stored)}"
 
-    with patch("pile.context.settings") as mock_settings, \
-         patch("pile.context.call_router_model") as mock_router, \
+    with patch("pile.config.settings") as mock_settings, \
+         patch("pile.client.call_router_model") as mock_router, \
          patch("pile.memory.store.search_memories", return_value=[]), \
          patch("pile.memory.store.add_memory", side_effect=mock_add):
         mock_settings.memory_enabled = True
         mock_router.return_value = "- Sprint 5: 68 tasks\n- Done: 11"
 
         from pile.context import summarize_turn
-        summarize_turn("Sprint thế nào?", "Sprint 5 có 68 tasks, 11 done.")
+        summarize_turn("Sprint thế nào?", "Sprint 5 có 68 tasks: 35 To Do, 15 Testing, 1 In Progress, 11 Done.")
 
     assert len(stored) == 2
     assert "Sprint 5: 68 tasks" in stored[0]
@@ -42,15 +42,15 @@ def test_summarize_turn_skips_duplicates():
         stored.append(content)
         return "mem_1"
 
-    with patch("pile.context.settings") as mock_settings, \
-         patch("pile.context.call_router_model") as mock_router, \
+    with patch("pile.config.settings") as mock_settings, \
+         patch("pile.client.call_router_model") as mock_router, \
          patch("pile.memory.store.search_memories", side_effect=mock_search), \
          patch("pile.memory.store.add_memory", side_effect=mock_add):
         mock_settings.memory_enabled = True
         mock_router.return_value = "- Sprint 5: 68 tasks\n- Blocker: TETRA-101"
 
         from pile.context import summarize_turn
-        summarize_turn("Sprint thế nào?", "Sprint 5 có 68 tasks. Blocker TETRA-101.")
+        summarize_turn("Sprint thế nào?", "Sprint 5 có 68 tasks: 35 To Do, 15 Testing. Blocker TETRA-101 chưa resolve.")
 
     assert len(stored) == 1
     assert "TETRA-101" in stored[0]
@@ -58,8 +58,8 @@ def test_summarize_turn_skips_duplicates():
 
 def test_summarize_turn_skips_none_response():
     """summarize_turn returns early when router returns NONE."""
-    with patch("pile.context.settings") as mock_settings, \
-         patch("pile.context.call_router_model") as mock_router, \
+    with patch("pile.config.settings") as mock_settings, \
+         patch("pile.client.call_router_model") as mock_router, \
          patch("pile.memory.store.add_memory") as mock_add:
         mock_settings.memory_enabled = True
         mock_router.return_value = "NONE"
@@ -72,8 +72,8 @@ def test_summarize_turn_skips_none_response():
 
 def test_summarize_turn_skips_short_response():
     """summarize_turn skips when agent response is too short."""
-    with patch("pile.context.settings") as mock_settings, \
-         patch("pile.context.call_router_model") as mock_router:
+    with patch("pile.config.settings") as mock_settings, \
+         patch("pile.client.call_router_model") as mock_router:
         mock_settings.memory_enabled = True
 
         from pile.context import summarize_turn
@@ -84,8 +84,8 @@ def test_summarize_turn_skips_short_response():
 
 def test_summarize_turn_skips_when_memory_disabled():
     """summarize_turn does nothing when memory is disabled."""
-    with patch("pile.context.settings") as mock_settings, \
-         patch("pile.context.call_router_model") as mock_router:
+    with patch("pile.config.settings") as mock_settings, \
+         patch("pile.client.call_router_model") as mock_router:
         mock_settings.memory_enabled = False
 
         from pile.context import summarize_turn
@@ -96,7 +96,7 @@ def test_summarize_turn_skips_when_memory_disabled():
 
 def test_recall_facts_returns_list():
     """recall_facts returns a list of fact strings."""
-    with patch("pile.context.settings") as mock_settings, \
+    with patch("pile.config.settings") as mock_settings, \
          patch("pile.memory.store.search_memories") as mock_search:
         mock_settings.memory_enabled = True
         mock_search.return_value = [
