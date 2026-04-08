@@ -186,6 +186,7 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
 
     current_step: cl.Step | None = None
     active_tool_steps: dict[str, list[cl.Step]] = {}  # tool_name -> [steps] (FIFO, handles duplicate calls)
+    final_text = ""  # Accumulate text, set on msg only after all agents complete
 
     if user_input is not None:
         run_iter = workflow.run(user_input, stream=True, include_status_events=True)
@@ -249,9 +250,9 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
             elif event.type == "output":
                 text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
                 if text:
+                    final_text += text
                     if current_step:
                         current_step.output += text
-                    await msg.stream_token(text)
 
             elif event.type == "executor_completed":
                 # Close any remaining tool steps
@@ -289,8 +290,7 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                 await current_step.update()
             else:
                 await current_step.remove()
-        if not msg.content:
-            msg.content = "*Stopped.*"
+        msg.content = final_text or "*Stopped.*"
         await msg.update()
         return []
     except Exception as e:
@@ -298,14 +298,15 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
         if current_step:
             current_step.output += f"\n\n*Error: {e}*"
             await current_step.update()
-        if not msg.content:
-            msg.content = f"*Error: {e}*"
+        msg.content = final_text or f"*Error: {e}*"
         await msg.update()
         raise
 
     if current_step:
         await current_step.update()
 
+    # Set final answer on message — appears after all steps
+    msg.content = final_text
     await msg.update()
 
     # Auto-detect numeric data and render charts
