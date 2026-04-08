@@ -285,48 +285,24 @@ class RoutedWorkflow:
                 yield WorkflowEvent.executor_completed(cached_agent)
                 return
 
-            # --- Prefetch data: deterministic data fetching before LLM ---
+            # --- Prefetch data: inject Jira data into user message ---
             has_prefetch = False
+            prefetch_data = None
 
-            # Scrum queries: prefetch sprint + issues data
-            if agent_key == "scrum" and self.board_id:
-                data = prefetch_scrum_data(message, self.board_id)
-                if data:
-                    has_prefetch = True
-                    self.agents["_scrum_prefetch"] = create_scrum_agent(
-                        self.client,
-                        middleware=[self.tracker],
-                        prefetch_data=data,
-                    )
-                    agent_key = "_scrum_prefetch"
-                    self._sessions.pop("_scrum_prefetch", None)
-
-            # Sprint queries: prefetch sprint data → redirect to scrum for analysis
-            elif agent_key == "sprint" and self.board_id:
-                data = prefetch_scrum_data(message, self.board_id)
-                if data:
-                    has_prefetch = True
-                    self.agents["_scrum_prefetch"] = create_scrum_agent(
-                        self.client,
-                        middleware=[self.tracker],
-                        prefetch_data=data,
-                    )
-                    agent_key = "_scrum_prefetch"
-                    self._sessions.pop("_scrum_prefetch", None)
-
-            # Jira query: prefetch for known intents (status filters, issue keys)
+            if agent_key in ("scrum", "sprint") and self.board_id:
+                prefetch_data = prefetch_scrum_data(message, self.board_id)
+                # Redirect sprint to scrum agent for analysis
+                if prefetch_data and agent_key == "sprint":
+                    agent_key = "scrum"
             elif agent_key == "jira_query":
                 from pile.prefetch import prefetch_query_data
-                data = prefetch_query_data(message)
-                if data:
-                    has_prefetch = True
-                    self.agents["_scrum_prefetch"] = create_scrum_agent(
-                        self.client,
-                        middleware=[self.tracker],
-                        prefetch_data=data,
-                    )
-                    agent_key = "_scrum_prefetch"
-                    self._sessions.pop("_scrum_prefetch", None)
+                prefetch_data = prefetch_query_data(message)
+                if prefetch_data:
+                    agent_key = "scrum"  # scrum agent analyzes prefetched data
+
+            if prefetch_data:
+                has_prefetch = True
+                enriched_message = f"{message}\n\nJira data:\n{prefetch_data}"
 
             # --- Auto-recall: show recalled facts in UI (do not inject into agent prompt) ---
             enriched_message = message

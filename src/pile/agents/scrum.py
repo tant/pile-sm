@@ -5,38 +5,20 @@ from __future__ import annotations
 from pile.config import settings
 
 SCRUM_INSTRUCTIONS = """\
-You are a Scrum Master for project {project_key} ({jira_url}). Answer the user's question using ONLY the Jira data below.
+You are a Scrum Master for project {project_key} ({jira_url}).
 
-DATA:
-{prefetch_data}
+When the user's message contains Jira data, analyze that data and answer the question.
+Include specific numbers, issue keys (TETRA-xxx), and assignee names.
+Do NOT say you cannot access the system — the data is provided to you.
 
-RULES:
-- Use the data above to answer. Do NOT say you need more data or cannot access the system.
-- Include specific numbers, issue keys (TETRA-xxx), and assignee names from the data.
-- Respond in the same language as the user.
-"""
-
-SCRUM_INSTRUCTIONS_NO_DATA = """\
-You are an experienced Scrum Master assistant for project {project_key} ({jira_url}).
-
-Use the available tools to gather data, then analyze and present insights.
-
-Rules:
-- Call 1-2 tools MAX, then analyze the data you received. Do NOT call the same tool twice.
-- Provide actionable insights with specific data points.
-- Respond in the same language as the user (Vietnamese or English).
+Respond in the same language as the user (Vietnamese or English).
 {git_note}
 {memory_note}
 """
 
 
-def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
-    """Create the Scrum Agent.
-
-    If prefetch_data is provided, the agent receives data in its instructions
-    and only has deep-dive tools (changelog, search). This prevents tool loops.
-    If no prefetch_data, falls back to full tool set.
-    """
+def create_scrum_agent(client, middleware=None, **kwargs):
+    """Create the Scrum Agent."""
     git_note = "Git is not configured — skip git-related analysis."
     memory_note = ""
 
@@ -55,33 +37,26 @@ def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
         memory_tools = [memory_search]
         memory_note = "You have memory_search for past decisions and knowledge base."
 
-    if prefetch_data:
-        # Prefetch mode: data in prompt, NO tools — model only analyzes
-        tools = []
-        instructions = SCRUM_INSTRUCTIONS.format(
-            project_key=settings.jira_project_key,
-            jira_url=settings.jira_base_url,
-            prefetch_data=prefetch_data,
-        )
-    else:
-        # Fallback: full tools (when prefetch is not possible)
-        from pile.tools.jira_tools import (
-            jira_get_board,
-            jira_get_changelog,
-            jira_get_issue,
-            jira_get_sprint_issues,
-            jira_search,
-        )
-        tools = [
-            jira_search, jira_get_issue, jira_get_board,
-            jira_get_sprint_issues, jira_get_changelog,
-        ] + git_tools + memory_tools
-        instructions = SCRUM_INSTRUCTIONS_NO_DATA.format(
-            project_key=settings.jira_project_key,
-            jira_url=settings.jira_base_url,
-            git_note=git_note,
-            memory_note=memory_note,
-        )
+    from pile.tools.jira_tools import (
+        jira_get_board,
+        jira_get_changelog,
+        jira_get_issue,
+        jira_get_sprint_issues,
+        jira_search,
+        get_current_sprint_info,
+        search_project_issues,
+    )
+    tools = [
+        get_current_sprint_info, search_project_issues,
+        jira_search, jira_get_issue, jira_get_board,
+        jira_get_sprint_issues, jira_get_changelog,
+    ] + git_tools + memory_tools
+    instructions = SCRUM_INSTRUCTIONS.format(
+        project_key=settings.jira_project_key,
+        jira_url=settings.jira_base_url,
+        git_note=git_note,
+        memory_note=memory_note,
+    )
 
     return client.as_agent(
         name="ScrumAgent",
