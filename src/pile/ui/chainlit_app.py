@@ -181,12 +181,9 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     """Stream a single workflow run, rendering steps in real-time."""
     import asyncio
 
-    msg = cl.Message(content="", author="Pile SM")
-    await msg.send()
-
     current_step: cl.Step | None = None
     active_tool_steps: dict[str, list[cl.Step]] = {}  # tool_name -> [steps] (FIFO, handles duplicate calls)
-    final_text = ""  # Accumulate text, set on msg only after all agents complete
+    final_text = ""  # Accumulate text, send as message after all steps complete
 
     if user_input is not None:
         run_iter = workflow.run(user_input, stream=True, include_status_events=True)
@@ -290,31 +287,30 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                 await current_step.update()
             else:
                 await current_step.remove()
-        msg.content = final_text or "*Stopped.*"
-        await msg.update()
+        await cl.Message(content=final_text or "*Stopped.*", author="Pile SM").send()
         return []
     except Exception as e:
         workflow._reset_running_flag()
         if current_step:
             current_step.output += f"\n\n*Error: {e}*"
             await current_step.update()
-        msg.content = final_text or f"*Error: {e}*"
-        await msg.update()
+        await cl.Message(content=final_text or f"*Error: {e}*", author="Pile SM").send()
         raise
 
     if current_step:
         await current_step.update()
 
-    # Set final answer on message — appears after all steps
-    msg.content = final_text
-    await msg.update()
-
-    # Auto-detect numeric data and render charts
-    await _send_charts_if_any(msg)
+    # Send final answer as a new message — appears after all steps
+    if final_text:
+        msg = cl.Message(content=final_text, author="Pile SM")
+        await msg.send()
+        await _send_charts_if_any(msg)
 
     # Background: extract and persist key facts from this turn
-    if user_input and msg.content and len(msg.content) >= 50:
+    if user_input and final_text and len(final_text) >= 50:
         from pile.context import summarize_turn
+
+        _summarize_text = final_text  # capture for closure
 
         async def _bg_summarize():
             try:
@@ -323,7 +319,7 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                     None,
                     summarize_turn,
                     user_input,
-                    msg.content,
+                    _summarize_text,
                 )
             except Exception:
                 pass  # Never break the response flow
