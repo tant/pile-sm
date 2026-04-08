@@ -152,6 +152,32 @@ def get_embed_model() -> Llama:
     return _embed_model
 
 
+def unload_model(role: str) -> None:
+    """Unload a model from memory. Next get_*_model() call will reload it."""
+    global _agent_model, _router_model, _embed_model
+    if role == "agent" and _agent_model is not None:
+        del _agent_model
+        _agent_model = None
+        logger.info("Unloaded agent model")
+    elif role == "router" and _router_model is not None:
+        del _router_model
+        _router_model = None
+        logger.info("Unloaded router model")
+    elif role == "embedding" and _embed_model is not None:
+        del _embed_model
+        _embed_model = None
+        logger.info("Unloaded embedding model")
+
+
+def unload_all() -> None:
+    """Unload all models from memory."""
+    for role in ("agent", "router", "embedding"):
+        unload_model(role)
+    import gc
+    gc.collect()
+    logger.info("All models unloaded")
+
+
 def ensure_models() -> None:
     """Download missing models, then load all. Called on app startup."""
     missing = get_missing_models()
