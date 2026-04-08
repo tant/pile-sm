@@ -281,6 +281,10 @@ class RoutedWorkflow:
                 memory_context = recall(message)
                 if memory_context:
                     enriched_message = f"{message}\n\n{memory_context}"
+                    from pile.context import recall_facts
+                    facts = recall_facts(message)
+                    if facts:
+                        yield WorkflowEvent.emit("system", {"type": "recalled_context", "facts": facts})
 
             # --- Wire tool event callbacks ---
             tool_events: asyncio.Queue = asyncio.Queue()
