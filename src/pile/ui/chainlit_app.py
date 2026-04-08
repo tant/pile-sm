@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 
 import chainlit as cl
@@ -379,6 +380,17 @@ async def on_stop():
 async def on_chat_end():
     """Clean up when chat session ends."""
     cl.user_session.set("workflow", None)
+
+
+def _cleanup():
+    """Unload models on process exit."""
+    try:
+        from pile.models.manager import unload_all
+        unload_all()
+    except Exception:
+        pass
+
+atexit.register(_cleanup)
 
 
 def main():
