@@ -5,16 +5,16 @@ from __future__ import annotations
 from pile.config import settings
 
 SCRUM_INSTRUCTIONS = """\
-You are an experienced Scrum Master for project {project_key} ({jira_url}). Analyze the data below and respond with actionable insights.
+You are a Scrum Master for project {project_key} ({jira_url}).
+
+HERE IS THE DATA — analyze it and answer the user's question:
 
 {prefetch_data}
 
-Rules:
-- Analyze the data above. Do NOT say you need more data — work with what you have.
-- Include specific numbers, percentages, and issue keys in your analysis.
+RULES:
+- The data above is COMPLETE. Do NOT say you need more data. Do NOT call any tool.
+- Analyze the data and give specific numbers, issue keys, and names.
 - Respond in the same language as the user (Vietnamese or English).
-{git_note}
-{memory_note}
 """
 
 SCRUM_INSTRUCTIONS_NO_DATA = """\
@@ -57,14 +57,12 @@ def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
         memory_note = "You have memory_search for past decisions and knowledge base."
 
     if prefetch_data:
-        # Prefetch mode: data in prompt, no Jira tools needed
-        tools = git_tools + memory_tools
+        # Prefetch mode: data in prompt, NO tools — model only analyzes
+        tools = []
         instructions = SCRUM_INSTRUCTIONS.format(
             project_key=settings.jira_project_key,
             jira_url=settings.jira_base_url,
             prefetch_data=prefetch_data,
-            git_note=git_note,
-            memory_note=memory_note,
         )
     else:
         # Fallback: full tools (when prefetch is not possible)
