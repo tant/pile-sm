@@ -181,11 +181,9 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
     """Stream a single workflow run, rendering steps in real-time."""
     import asyncio
 
-    msg = cl.Message(content="", author="Pile SM")
-    await msg.send()
-
     current_step: cl.Step | None = None
     active_tool_steps: dict[str, list[cl.Step]] = {}  # tool_name -> [steps] (FIFO, handles duplicate calls)
+    final_text = ""  # Accumulate answer text, send as message AFTER all steps
 
     if user_input is not None:
         run_iter = workflow.run(user_input, stream=True, include_status_events=True)
@@ -249,9 +247,9 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
             elif event.type == "output":
                 text = getattr(event.data, "text", None) if not isinstance(event.data, list) else None
                 if text:
+                    final_text += text
                     if current_step:
                         current_step.output += text
-                    await msg.stream_token(text)
 
             elif event.type == "executor_completed":
                 # Close any remaining tool steps
@@ -289,31 +287,30 @@ async def _run_workflow_once(workflow, *, user_input: str | None = None, respons
                 await current_step.update()
             else:
                 await current_step.remove()
-        if not msg.content:
-            msg.content = "*Stopped.*"
-        await msg.update()
+        await cl.Message(content=final_text or "*Stopped.*", author="Pile SM").send()
         return []
     except Exception as e:
         workflow._reset_running_flag()
         if current_step:
             current_step.output += f"\n\n*Error: {e}*"
             await current_step.update()
-        if not msg.content:
-            msg.content = f"*Error: {e}*"
-        await msg.update()
+        await cl.Message(content=final_text or f"*Error: {e}*", author="Pile SM").send()
         raise
 
     if current_step:
         await current_step.update()
 
-    await msg.update()
-    await _send_charts_if_any(msg)
+    # Send final answer AFTER all steps — appears at the bottom
+    if final_text:
+        msg = cl.Message(content=final_text, author="Pile SM")
+        await msg.send()
+        await _send_charts_if_any(msg)
 
     # Background: extract and persist key facts from this turn
-    if user_input and msg.content and len(msg.content) >= 50:
+    if user_input and final_text and len(final_text) >= 50:
         from pile.context import summarize_turn
 
-        _summarize_text = msg.content  # capture for closure
+        _summarize_text = final_text  # capture for closure
 
         async def _bg_summarize():
             try:
