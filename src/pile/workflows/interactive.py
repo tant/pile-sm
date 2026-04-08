@@ -285,10 +285,39 @@ class RoutedWorkflow:
                 yield WorkflowEvent.executor_completed(cached_agent)
                 return
 
-            # --- Prefetch data for scrum queries ---
+            # --- Prefetch data: deterministic data fetching before LLM ---
             has_prefetch = False
+
+            # Scrum queries: prefetch sprint + issues data
             if agent_key == "scrum" and self.board_id:
                 data = prefetch_scrum_data(message, self.board_id)
+                if data:
+                    has_prefetch = True
+                    self.agents["_scrum_prefetch"] = create_scrum_agent(
+                        self.client,
+                        middleware=[self.tracker],
+                        prefetch_data=data,
+                    )
+                    agent_key = "_scrum_prefetch"
+                    self._sessions.pop("_scrum_prefetch", None)
+
+            # Sprint queries: prefetch sprint data → redirect to scrum for analysis
+            elif agent_key == "sprint" and self.board_id:
+                data = prefetch_scrum_data(message, self.board_id)
+                if data:
+                    has_prefetch = True
+                    self.agents["_scrum_prefetch"] = create_scrum_agent(
+                        self.client,
+                        middleware=[self.tracker],
+                        prefetch_data=data,
+                    )
+                    agent_key = "_scrum_prefetch"
+                    self._sessions.pop("_scrum_prefetch", None)
+
+            # Jira query: prefetch for known intents (status filters, issue keys)
+            elif agent_key == "jira_query":
+                from pile.prefetch import prefetch_query_data
+                data = prefetch_query_data(message)
                 if data:
                     has_prefetch = True
                     self.agents["_scrum_prefetch"] = create_scrum_agent(

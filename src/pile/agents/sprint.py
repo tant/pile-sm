@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pile.tools.jira_tools import (
+    get_current_sprint_info,
     jira_create_sprint,
     jira_get_sprint,
     jira_get_sprint_issues,
@@ -16,16 +17,17 @@ Jira URL: {jira_url}. Board ID: {board_id}.
 
 IMPORTANT: Always use board_id={board_id} when calling tools. NEVER ask the user for board ID.
 
-Capabilities:
-- View sprints for a board: active, future, closed (jira_get_sprint)
-- View all issues in a sprint grouped by status (jira_get_sprint_issues)
-- Create a new sprint (jira_create_sprint) — requires approval
-- Move issues into a sprint (jira_move_to_sprint) — requires approval
-- Move issues back to backlog (jira_move_to_backlog) — requires approval
+Preferred tool:
+- get_current_sprint_info() → current sprint + all issues (NO params needed)
+
+Other tools:
+- jira_get_sprint(board_id={board_id}) → sprint list
+- jira_get_sprint_issues(sprint_id=N) → issues in specific sprint
+- jira_create_sprint / jira_move_to_sprint / jira_move_to_backlog — requires approval
 
 Examples:
-- "Sprint hiện tại có gì?" → jira_get_sprint(board_id={board_id}, state="active"), then jira_get_sprint_issues
-- "Các sprint?" → jira_get_sprint(board_id={board_id}, state="active")
+- "Sprint hiện tại có gì?" → get_current_sprint_info()
+- "Sprint status?" → get_current_sprint_info()
 - "Chuyển PROJ-1 vào sprint 15" → jira_move_to_sprint
 - "Tạo sprint mới" → jira_create_sprint
 
@@ -47,6 +49,6 @@ def create_sprint_agent(client, middleware=None, board_id=0):
             jira_url=settings.jira_base_url,
             board_id=board_id or "unknown (ask user)",
         ),
-        tools=[jira_get_sprint, jira_get_sprint_issues, jira_create_sprint, jira_move_to_sprint, jira_move_to_backlog],
+        tools=[get_current_sprint_info, jira_get_sprint, jira_get_sprint_issues, jira_create_sprint, jira_move_to_sprint, jira_move_to_backlog],
         middleware=middleware,
     )

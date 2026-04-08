@@ -120,6 +120,42 @@ def jira_search(
     return "\n".join(lines)
 
 
+# --- Higher-level tools (simple params, no JQL needed) ---
+
+
+@_safe_jira_call
+def search_project_issues(
+    status: Annotated[str, Field(description="Issue status filter: 'In Progress', 'To Do', 'Done', 'Testing', or empty for all")] = "",
+    assignee: Annotated[str, Field(description="Assignee display name filter, or empty for all")] = "",
+    max_results: Annotated[int, Field(description="Maximum results")] = 15,
+) -> str:
+    """Search issues in current project by status and/or assignee. No JQL needed."""
+    project = settings.jira_project_key
+    parts = [f"project={project}"]
+    if status:
+        parts.append(f"status='{status}'")
+    if assignee:
+        parts.append(f"assignee='{assignee}'")
+    parts.append("issuetype not in subtaskIssueTypes()")
+    jql = " AND ".join(parts) + " ORDER BY priority DESC"
+    return jira_search(jql=jql, max_results=max_results)
+
+
+@_safe_jira_call
+def get_current_sprint_info() -> str:
+    """Get current sprint details + all issues grouped by status. No params needed."""
+    from pile.prefetch import _get_active_sprint_id
+    board_id = settings.default_board_id
+    if not board_id:
+        return "Error: No board ID configured."
+    sprint_data = jira_get_sprint(board_id=board_id, state="active")
+    sprint_id = _get_active_sprint_id(board_id)
+    if sprint_id:
+        issues_data = jira_get_sprint_issues(sprint_id=sprint_id)
+        return f"{sprint_data}\n\n{issues_data}"
+    return sprint_data
+
+
 @_safe_jira_call
 def jira_get_issue(
     issue_key: Annotated[str, Field(description="Jira issue key, e.g. TETRA-123")],

@@ -153,6 +153,62 @@ def prefetch_scrum_data(query: str, board_id: int) -> str:
     return data
 
 
+# --- Prefetch for Jira query intents ---
+
+_QUERY_PATTERNS: dict[str, str] = {
+    "in_progress": "project = {project} AND status = 'In Progress' ORDER BY priority DESC",
+    "to_do": "project = {project} AND status = 'To Do' ORDER BY priority DESC",
+    "done_recent": "project = {project} AND status = Done AND updated >= -7d ORDER BY updated DESC",
+    "testing": "project = {project} AND status = 'Testing' ORDER BY priority DESC",
+    "code_review": "project = {project} AND status = 'Code Review' ORDER BY priority DESC",
+    "my_issues": "project = {project} AND assignee = currentUser() ORDER BY priority DESC",
+}
+
+_QUERY_INTENT_PATTERNS: list[tuple[str, list[str]]] = [
+    ("in_progress", [r"in\s+progress", r"đang\s+l[aà]m", r"đang\s+th[uự]c\s+hi[eệ]n"]),
+    ("to_do", [r"to\s+do\b", r"ch[uư]a\s+l[aà]m", r"c[aầ]n\s+l[aà]m"]),
+    ("done_recent", [r"\bdone\b.*tu[aầ]n", r"ho[aà]n\s+th[aà]nh", r"xong\b"]),
+    ("testing", [r"testing\b", r"đang\s+test", r"ki[eể]m\s+th[uử]"]),
+    ("code_review", [r"code\s+review", r"review\b"]),
+]
+
+
+def detect_query_intent(query: str) -> str | None:
+    """Detect if query matches a known JQL pattern. Returns intent key or None."""
+    q = query.lower().strip()
+    for intent, patterns in _QUERY_INTENT_PATTERNS:
+        for pattern in patterns:
+            if re.search(pattern, q, re.IGNORECASE):
+                return intent
+    # Issue key detection
+    match = re.search(r"([A-Z]+-\d+)", query)
+    if match:
+        return f"issue:{match.group(1)}"
+    return None
+
+
+def prefetch_query_data(query: str) -> str | None:
+    """Prefetch Jira data for common query patterns. Returns data or None."""
+    from pile.tools.jira_tools import jira_search, jira_get_issue
+
+    intent = detect_query_intent(query)
+    if not intent:
+        return None
+
+    logger.info("Query prefetch: '%s' → intent=%s", query[:40], intent)
+
+    if intent.startswith("issue:"):
+        issue_key = intent.split(":", 1)[1]
+        return _safe_call(jira_get_issue, issue_key=issue_key)
+
+    jql_template = _QUERY_PATTERNS.get(intent)
+    if jql_template:
+        jql = jql_template.format(project=_project_key())
+        return _safe_call(jira_search, jql=jql, max_results=15)
+
+    return None
+
+
 def _get_active_sprint_id(board_id: int) -> int | None:
     """Get the active sprint ID for a board via Jira API directly."""
     try:
