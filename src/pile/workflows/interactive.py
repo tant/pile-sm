@@ -184,19 +184,39 @@ class RoutedWorkflow:
     async def _execute_agent(self, agent_key: str, message: str):
         """Run a single agent, yielding streaming updates.
 
-        Yields AgentResponseUpdate objects as they arrive.
-        Caller accumulates full_text for recovery detection.
+        Tries streaming first. If the agent uses tools (multi-turn loop),
+        the framework handles tool calls internally during get_final_response().
+        In that case, streaming may yield no useful text, so we fall back to
+        yielding the final response text as a single update.
         """
+        from agent_framework._types import AgentResponseUpdate, Content
+
         agent = self.agents.get(agent_key, self.agents["triage"])
         session = self._get_session(agent_key)
 
         # Drain any leftover tool calls from previous runs.
         self.tracker.drain()
 
-        result_stream = agent.run(message, stream=True, session=session)
-        async for update in result_stream:
-            yield update
-        await result_stream.get_final_response()
+        streamed_text = ""
+        try:
+            result_stream = agent.run(message, stream=True, session=session)
+            async for update in result_stream:
+                if update.text:
+                    streamed_text += update.text
+                yield update
+            final = await result_stream.get_final_response()
+        except NotImplementedError:
+            # Streaming not supported — run non-streaming
+            response = await agent.run(message, session=session)
+            if response.text:
+                yield AgentResponseUpdate(contents=[Content.from_text(response.text)])
+            return
+
+        # If streaming yielded no text but final response has text,
+        # the agent did tool calls and produced text in a later turn.
+        # Yield that text now.
+        if not streamed_text and final and final.text:
+            yield AgentResponseUpdate(contents=[Content.from_text(final.text)])
 
     async def _drain_tool_queue(self, tool_events: asyncio.Queue, agent_name: str):
         """Drain pending tool events from queue, yielding WorkflowEvents."""
