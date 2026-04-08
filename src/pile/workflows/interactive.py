@@ -295,16 +295,13 @@ class RoutedWorkflow:
                     agent_key = "_scrum_prefetch"
                     self._sessions.pop("_scrum_prefetch", None)
 
-            # --- Auto-recall: inject memory context ---
+            # --- Auto-recall: show recalled facts in UI (do not inject into agent prompt) ---
             enriched_message = message
             if agent_key not in ("triage", "memory"):
-                memory_context = recall(message)
-                if memory_context:
-                    enriched_message = f"{message}\n\n{memory_context}"
-                    from pile.context import recall_facts
-                    facts = recall_facts(message)
-                    if facts:
-                        yield WorkflowEvent.emit("system", {"type": "recalled_context", "facts": facts})
+                from pile.context import recall_facts
+                facts = recall_facts(message, n_results=3)
+                if facts:
+                    yield WorkflowEvent.emit("system", {"type": "recalled_context", "facts": facts})
 
             # --- Wire tool event callbacks ---
             tool_events: asyncio.Queue = asyncio.Queue()
