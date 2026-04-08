@@ -184,10 +184,10 @@ class RoutedWorkflow:
     async def _execute_agent(self, agent_key: str, message: str):
         """Run a single agent, yielding streaming updates.
 
-        Tries streaming first. If the agent uses tools (multi-turn loop),
-        the framework handles tool calls internally during get_final_response().
-        In that case, streaming may yield no useful text, so we fall back to
-        yielding the final response text as a single update.
+        Tries streaming first for token-by-token output. If streaming yields
+        nothing (common when agent calls tools — the framework's multi-turn
+        loop doesn't stream properly with local LLMs), falls back to
+        non-streaming and yields the complete response as one chunk.
         """
         from agent_framework._types import AgentResponseUpdate, Content
 
@@ -197,6 +197,7 @@ class RoutedWorkflow:
         # Drain any leftover tool calls from previous runs.
         self.tracker.drain()
 
+        # Try streaming first
         streamed_text = ""
         try:
             result_stream = agent.run(message, stream=True, session=session)
@@ -204,19 +205,22 @@ class RoutedWorkflow:
                 if update.text:
                     streamed_text += update.text
                 yield update
-            final = await result_stream.get_final_response()
-        except NotImplementedError:
-            # Streaming not supported — run non-streaming
-            response = await agent.run(message, session=session)
-            if response.text:
-                yield AgentResponseUpdate(contents=[Content.from_text(response.text)])
+            await result_stream.get_final_response()
+        except (NotImplementedError, Exception) as e:
+            if not isinstance(e, NotImplementedError):
+                logger.warning("Streaming failed for %s: %s — falling back", agent_key, e)
+
+        # If streaming produced text, we're done
+        if streamed_text:
             return
 
-        # If streaming yielded no text but final response has text,
-        # the agent did tool calls and produced text in a later turn.
-        # Yield that text now.
-        if not streamed_text and final and final.text:
-            yield AgentResponseUpdate(contents=[Content.from_text(final.text)])
+        # Fallback: run non-streaming (handles tool-calling agents properly)
+        logger.info("Streaming empty for %s — running non-streaming fallback", agent_key)
+        self.tracker.drain()  # clear any partial tool records
+        session2 = self._get_session(agent_key)
+        response = await agent.run(message, session=session2)
+        if response.text:
+            yield AgentResponseUpdate(contents=[Content.from_text(response.text)])
 
     async def _drain_tool_queue(self, tool_events: asyncio.Queue, agent_name: str):
         """Drain pending tool events from queue, yielding WorkflowEvents."""
