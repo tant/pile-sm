@@ -12,7 +12,7 @@ from pile.tools.jira_tools import (
 
 SPRINT_INSTRUCTIONS = """\
 You are a sprint management specialist for project {project_key}.
-Default board ID: {board_id}. Use this when user doesn't specify a board.
+Jira URL: {jira_url}. Default board ID: {board_id}. Use this when user doesn't specify a board.
 
 You help users view sprints and move issues between sprints and backlog.
 
@@ -47,6 +47,7 @@ def create_sprint_agent(client, middleware=None, board_id=0):
         description="Sprint specialist: view sprints, move issues, create sprints",
         instructions=SPRINT_INSTRUCTIONS.format(
             project_key=settings.jira_project_key,
+            jira_url=settings.jira_base_url,
             board_id=board_id or "unknown (ask user)",
         ),
         tools=[jira_get_sprint, jira_get_sprint_issues, jira_create_sprint, jira_move_to_sprint, jira_move_to_backlog],

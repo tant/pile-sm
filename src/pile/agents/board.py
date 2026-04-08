@@ -6,6 +6,7 @@ from pile.tools.jira_tools import jira_get_board, jira_get_board_config, jira_li
 
 BOARD_INSTRUCTIONS = """\
 You are a Jira board specialist for project {project_key}.
+Jira URL: {jira_url}
 
 You help users view and understand their Jira boards.
 
@@ -34,7 +35,10 @@ def create_board_agent(client, middleware=None):
     return client.as_agent(
         name="BoardAgent",
         description="Board specialist: list boards, board detail, board configuration",
-        instructions=BOARD_INSTRUCTIONS.format(project_key=settings.jira_project_key),
+        instructions=BOARD_INSTRUCTIONS.format(
+            project_key=settings.jira_project_key,
+            jira_url=settings.jira_base_url,
+        ),
         tools=[jira_list_boards, jira_get_board, jira_get_board_config],
         middleware=middleware,
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pile.config import settings
 
 SCRUM_INSTRUCTIONS = """\
-You are an experienced Scrum Master for project {project_key}. Analyze the data below and respond with actionable insights.
+You are an experienced Scrum Master for project {project_key} ({jira_url}). Analyze the data below and respond with actionable insights.
 
 {prefetch_data}
 
@@ -18,7 +18,7 @@ Rules:
 """
 
 SCRUM_INSTRUCTIONS_NO_DATA = """\
-You are an experienced Scrum Master assistant for project {project_key}.
+You are an experienced Scrum Master assistant for project {project_key} ({jira_url}).
 
 Use the available tools to gather data, then analyze and present insights.
 
@@ -61,6 +61,7 @@ def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
         tools = git_tools + memory_tools
         instructions = SCRUM_INSTRUCTIONS.format(
             project_key=settings.jira_project_key,
+            jira_url=settings.jira_base_url,
             prefetch_data=prefetch_data,
             git_note=git_note,
             memory_note=memory_note,
@@ -80,6 +81,7 @@ def create_scrum_agent(client, middleware=None, prefetch_data: str = ""):
         ] + git_tools + memory_tools
         instructions = SCRUM_INSTRUCTIONS_NO_DATA.format(
             project_key=settings.jira_project_key,
+            jira_url=settings.jira_base_url,
             git_note=git_note,
             memory_note=memory_note,
         )
